@@ -1,0 +1,73 @@
+/* ---------------------------------------------------------------------------
+   Palette — cyan on deep ocean blue.
+
+   None of this was eyeballed. The eight series colours pass all six checks of a
+   categorical-palette validator against the real surface below (#0b1a26):
+   lightness band, chroma floor, separation under protanopia and deuteranopia,
+   a normal-vision floor, and contrast.
+
+     series (8, fixed order)   worst adjacent pair dE 10.3 (protan) · 20.0 normal
+     first 3, ALL pairs        dE 8.0 · 16.4 normal   (scatter, treemap)
+     cyan sequential ramp      monotone, light end 2.49:1 against the surface
+
+   The slot ORDER is the colour-vision safety mechanism: it does not change, and
+   there is no ninth series — a ninth becomes "other".
+
+   To rebrand: replace the values in this file and re-run a palette validator
+   against your own surface. Nothing else needs to change.
+--------------------------------------------------------------------------- */
+
+:root {
+  color-scheme: dark;
+
+  /* 60% — the ocean */
+  --bg:     #071520;
+  --bg2:    #0b1a26;   /* card surface = the validated chart surface */
+  --bg3:    #122432;   /* tracks, grooves, bar backgrounds */
+  --bg4:    #17303f;
+
+  /* 30% — ink and structure */
+  --ink:    #e4f0f5;   /* 15.2:1 */
+  --ink2:   #9db3c1;   /*  8.1:1 */
+  --ink3:   #718c9b;   /*  4.6:1 — the floor for normal body text */
+  --line:   #1b2f3e;
+  --line2:  #24455a;
+
+  /* 10% — the cyan */
+  --cyan:   #3ddbf0;   /* 10.6:1 — interface accent */
+  --cyan-d: #19a2b8;   /* the same cyan stepped as a series colour */
+  --cyan-v: #3ddbf01f; /* veil */
+
+  /* categorical series — fixed order, never cycled */
+  --s1: #19a2b8;  /* cyan    */
+  --s2: #cc6f28;  /* orange  */
+  --s3: #8a7ae0;  /* violet  */
+  --s4: #ab9022;  /* yellow  */
+  --s5: #d2668f;  /* magenta */
+  --s6: #17864b;  /* green   */
+  --s7: #3f82cc;  /* blue    */
+  --s8: #d45050;  /* red     */
+
+  /* sequential ramp — one hue, light to dark */
+  --q1: #8ce0ec;
+  --q2: #43c4d8;
+  --q3: #19a2b8;
+  --q4: #1c8ca5;
+  --q5: #19758c;
+  --q6: #1a6073;
+
+  /* ordinal neutrals — for emphasis: when ONE slice matters, the others recede
+     in lightness steps of the same hue instead of competing for attention */
+  --n1: #3d6076;
+  --n2: #28516b;
+  --n3: #193445;
+
+  /* Outside the palette, and only for this: it LINKS a number to its proof, or
+     marks the BOUNDARY between what goes and what stays. It never qualifies a
+     single thing on its own — there is no green/red status colour in this
+     project, because status is carried by position and label instead. */
+  --edge: #e0a04a;
+
+  --mono: ui-monospace, "SF Mono", Menlo, monospace;
+  --sans: ui-sans-serif, -apple-system, "Inter", system-ui, sans-serif;
+}

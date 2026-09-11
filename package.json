@@ -1,0 +1,16 @@
+{
+  "name": "reckon",
+  "version": "0.1.0",
+  "description": "A local dashboard that tells you what to do about your Mac's disk and memory — and never deletes anything itself.",
+  "license": "MIT",
+  "private": false,
+  "bin": { "reckon": "./bin/reckon" },
+  "scripts": {
+    "start": "node server.js",
+    "scan": "node bin/scan.js",
+    "test": "node bin/check.js"
+  },
+  "keywords": ["macos", "disk-space", "docker", "dashboard", "cleanup", "local-first", "no-dependencies"],
+  "engines": { "node": ">=18" },
+  "repository": { "type": "git", "url": "https://github.com/Arthuro0103/reckon.git" }
+}

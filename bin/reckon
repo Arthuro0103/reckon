@@ -1,0 +1,7 @@
+#!/usr/bin/env node
+'use strict';
+// `reckon` starts the panel. `reckon scan` runs a deep scan in the terminal.
+const arg = process.argv[2];
+if (arg === 'scan') require('./scan.js');
+else if (arg === 'check') require('./check.js');
+else require('../server.js');
