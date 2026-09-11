@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>reckon</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+
+<header>
+  <div class="brand">
+    <h1>reck<i>o</i>n</h1>
+    <span class="sub" id="machine-sub">reading…</span>
+  </div>
+  <nav id="tabs">
+    <button data-tab="overview" aria-selected="true">Overview<span class="count" id="count-overview"></span></button>
+    <button data-tab="memory" aria-selected="false">Memory</button>
+    <button data-tab="disk" aria-selected="false">Disk</button>
+    <button data-tab="checks" aria-selected="false">Checks<span class="count" id="count-checks"></span></button>
+    <span class="spacer"></span>
+    <button data-tab="dns" aria-selected="false" class="risky">DNS</button>
+  </nav>
+</header>
+
+<main>
+  <section id="tab-overview"></section>
+  <section id="tab-memory" hidden></section>
+  <section id="tab-disk" hidden></section>
+  <section id="tab-checks" hidden></section>
+  <section id="tab-dns" hidden></section>
+</main>
+
+<footer>
+  <span>this panel: <b class="self" id="self-rss">—</b> of RAM <span id="self-share"></span></span>
+  <span>cpu <b id="self-cpu">—</b></span>
+  <span id="self-policy">collects on demand · no polling</span>
+  <span class="balance" id="balance"></span>
+</footer>
+
+<script src="/charts.js"></script>
+<script src="/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,8 @@
+{
+  "_comment": "Optional. reckon finds all of this on its own; this file only overrides the guess. Copy it to reckon.config.json and edit — that name is gitignored.",
+
+  "codeDirs": ["~/code", "~/Projects"],
+  "worktreeDirs": ["~/.worktrees"],
+  "vaults": ["~/Documents/MyVault"],
+  "staleDays": 60
+}

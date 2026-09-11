@@ -1,0 +1,16 @@
+# Your machine's configuration. This file names the directories you keep code
+# in and the vaults you use — it is yours, and it never belongs in a commit.
+reckon.config.json
+
+# Scan results, blocklist and generated snippets live outside the repo, in
+# ~/.cache/reckon/. Listed here anyway in case anyone moves them.
+*.local.json
+scan.json
+blocklist.json
+hosts-block.txt
+
+node_modules/
+.DS_Store
+*.log
+.env
+.env.*

@@ -1,0 +1,326 @@
+@import url("/tokens.css");
+
+/* ---------------------------------------------------------------------------
+   Dashboard. 60% oceano · 30% ink e estrutura · 10% cyan.
+
+   Colour from outside the palette appears only where it LINKS two things (the
+   thread tying a number to its proof) or marks a BOUNDARY (the line between
+   what goes and what stays). Status never becomes colour: urgency is the word
+   "now" or "later", and "disposable" and "stays" are told apart by position and
+   label. There is no traffic-light green or red in this file.
+--------------------------------------------------------------------------- */
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0; background: var(--bg); color: var(--ink);
+  font: 15px/1.55 var(--sans); -webkit-font-smoothing: antialiased;
+  padding-bottom: 64px;
+}
+
+/* ---------------------------------------------------------------- header */
+header {
+  border-bottom: 1px solid var(--line); padding: 16px 28px 0;
+  position: sticky; top: 0; z-index: 40;
+  background: color-mix(in srgb, var(--bg) 93%, transparent);
+  backdrop-filter: blur(10px);
+}
+.brand { display: flex; align-items: baseline; gap: 13px; flex-wrap: wrap; }
+.brand h1 { font-size: 19px; margin: 0; letter-spacing: -0.025em; font-weight: 650; }
+.brand h1 i { font-style: normal; color: var(--cyan); }
+.brand .sub { color: var(--ink3); font-size: 12.5px; font-family: var(--mono); }
+
+nav { display: flex; gap: 2px; margin-top: 13px; flex-wrap: wrap; }
+nav button {
+  background: none; border: 0; border-bottom: 2px solid transparent;
+  color: var(--ink3); font: inherit; font-size: 14px; cursor: pointer;
+  padding: 9px 15px 11px; transition: color .12s;
+}
+nav button:hover { color: var(--ink2); }
+nav button[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--cyan); }
+nav button .count { font-family: var(--mono); font-size: 11px; color: var(--ink3); margin-left: 6px; }
+nav .spacer { flex: 1 1 24px; min-width: 24px; }
+nav button.risky { border-bottom-style: dashed; }
+nav button.risky[aria-selected="true"] { border-bottom-style: solid; }
+
+main { padding: 24px 28px; max-width: 1360px; }
+
+/* --------------------------------------------------------------- verdict */
+.verdict { margin-bottom: 22px; }
+.verdict .headline {
+  font-size: clamp(36px, 6.4vw, 58px); line-height: 1.02; letter-spacing: -0.035em;
+  font-weight: 680; margin: 0; font-family: var(--sans);   /* never a serif on the hero figure */
+}
+.verdict .headline em { font-style: normal; color: var(--cyan); }
+.verdict .summary { color: var(--ink2); font-size: 15.5px; margin: 11px 0 0; max-width: 76ch; }
+.verdict .summary b { color: var(--ink); font-weight: 600; }
+.verdict .stamp {
+  font-family: var(--mono); font-size: 12px; color: var(--ink3);
+  margin-top: 11px; display: flex; gap: 15px; align-items: center; flex-wrap: wrap;
+}
+
+/* ------------------------------------------------------------------ grid */
+/* minmax(0,1fr), not 1fr: the default for 1fr is minmax(auto,1fr), and `auto`
+   will not shrink below a card's min-content. A long monospace path inside one
+   card pushed the whole grid wide and the page started scrolling sideways on a
+   phone. */
+.grid { display: grid; gap: 14px; grid-template-columns: repeat(12, minmax(0, 1fr)); margin-bottom: 22px; }
+/* The full scale: using a class that does not exist silently turns the card
+   into a 1/12 column and the chart inside it disappears. */
+.c2 { grid-column: span 2; } .c3 { grid-column: span 3; } .c4 { grid-column: span 4; }
+.c5 { grid-column: span 5; } .c6 { grid-column: span 6; } .c7 { grid-column: span 7; }
+.c8 { grid-column: span 8; } .c9 { grid-column: span 9; } .c12 { grid-column: span 12; }
+
+/* ------------------------------------------------------------ chart card */
+.g-card {
+  margin: 0; background: var(--bg2); border: 1px solid var(--line);
+  border-radius: 10px; padding: 15px 17px 13px; min-width: 0;
+  display: flex; flex-direction: column;
+}
+.g-card figcaption {
+  display: flex; justify-content: space-between; align-items: flex-start;
+  gap: 12px; margin-bottom: 11px;
+}
+.g-card h3 { font-size: 13.5px; margin: 0; font-weight: 600; letter-spacing: -0.005em; }
+.g-card figcaption p { margin: 3px 0 0; font-size: 12.5px; color: var(--ink3); max-width: 62ch; }
+.g-toggle {
+  background: none; border: 1px solid var(--line2); color: var(--ink3);
+  font: 11px var(--mono); padding: 3px 9px; border-radius: 4px; cursor: pointer; flex-shrink: 0;
+}
+.g-toggle:hover { border-color: var(--cyan); color: var(--ink); }
+/* card curto numa line alta: centra a forma em vez de deixar um empty embaixo */
+.g-body { flex: 1; min-height: 0; display: flex; flex-direction: column; justify-content: center; }
+.g-svg { width: 100%; height: auto; display: block; overflow: visible; }
+/* o donut nao precisa crescer com o card: acima de ~300px ele so ocupa tela */
+.g-svg.donut { width: auto; max-width: min(100%, 300px); margin: 0 auto; }
+.g-svg.pie { width: auto; max-width: min(100%, 360px); margin: 0 auto; }
+.g-svg.gauge  { width: auto; max-width: min(100%, 210px); margin: 0 auto; }
+
+/* text inside a chart never wears the data colour */
+.g-tick    { font: 12.5px var(--sans); fill: var(--ink2); }
+.g-val    { font: 11.5px var(--mono); fill: var(--ink2); }
+.g-val.highlight { fill: var(--cyan); font-size: 13px; }
+.g-axis   { font: 11px var(--mono); fill: var(--ink3); }
+.g-axis.mini { font-size: 9.5px; }
+.g-axis.strong { fill: var(--ink2); font-family: var(--sans); font-size: 11.5px; }
+.g-inside { font: 11.5px var(--mono); fill: #05131c; font-weight: 600; }
+.g-inside.faint { opacity: .72; font-weight: 400; }
+.g-inside.light { fill: var(--ink2); font-weight: 500; }
+.g-center { font: 21px var(--sans); fill: var(--ink); font-weight: 650; letter-spacing: -.02em; }
+
+.g-legend { display: flex; flex-wrap: wrap; gap: 5px 15px; font-size: 12px; color: var(--ink2); margin-bottom: 11px; }
+.g-legend i { width: 9px; height: 9px; border-radius: 2px; display: inline-block; margin-right: 6px; }
+
+.g-table { overflow: auto; max-height: 330px; }
+.g-table table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.g-table th {
+  text-align: left; font: 10.5px var(--mono); text-transform: uppercase; letter-spacing: .08em;
+  color: var(--ink3); padding: 6px 10px 6px 0; border-bottom: 1px solid var(--line);
+  position: sticky; top: 0; background: var(--bg2);
+}
+.g-table td { padding: 6px 10px 6px 0; border-bottom: 1px solid var(--bg3); color: var(--ink2); }
+.g-table .num { text-align: right; font-family: var(--mono); font-variant-numeric: tabular-nums; }
+
+/* ------------------------------------------------------------- stat tile */
+.tile { display: flex; flex-direction: column; gap: 3px; }
+.tile .lab { font-size: 12.5px; color: var(--ink3); }
+.tile .val { font-size: 27px; font-weight: 650; letter-spacing: -.03em; line-height: 1.15; }
+.tile .val small { font-size: 14px; color: var(--ink3); font-weight: 400; margin-left: 3px; }
+.tile .foot { font-size: 12px; color: var(--ink3); margin-top: 2px; }
+.tile .foot b { color: var(--ink2); font-weight: 600; }
+
+/* --------------------------------------------------------------- tooltip */
+.tip {
+  position: fixed; z-index: 999; display: none; pointer-events: none;
+  background: var(--bg4); border: 1px solid var(--line2); border-radius: 6px;
+  padding: 8px 11px; font: 12.5px/1.5 var(--sans); color: var(--ink);
+  box-shadow: 0 8px 26px #00000073; max-width: 290px;
+}
+.tip b { color: var(--cyan); font-weight: 600; }
+.tip i { color: var(--ink3); font-style: normal; font-size: 11.5px; }
+
+/* -------------------------------------------------------- section heading */
+.section { margin: 28px 0 13px; }
+.section h2 {
+  font: 600 12.5px var(--sans); text-transform: uppercase; letter-spacing: .1em;
+  color: var(--ink2); margin: 0 0 4px;
+}
+.section p { margin: 0; color: var(--ink3); font-size: 13.5px; max-width: 78ch; }
+
+/* THE BOUNDARY — one of the two places colour leaves the palette. */
+.boundary {
+  display: flex; align-items: center; gap: 14px; margin: 34px 0 16px;
+  color: var(--edge); font: 11.5px var(--mono); letter-spacing: .14em; text-transform: uppercase;
+}
+.boundary::before, .boundary::after { content: ""; height: 1px; background: currentColor; opacity: .4; }
+.boundary::before { width: 26px; } .boundary::after { flex: 1; }
+
+/* ----------------------------------------------------------------- cards */
+.card {
+  border: 1px solid var(--line); border-radius: 10px;
+  background: var(--bg2); padding: 16px 19px; margin-bottom: 10px;
+}
+.card.stays { background: none; border-style: dashed; }
+.row { display: flex; align-items: flex-start; gap: 16px; }
+.weight {
+  font: 600 20px var(--mono); min-width: 104px; letter-spacing: -.02em;
+  flex-shrink: 0; padding-top: 1px; font-variant-numeric: tabular-nums;
+}
+.weight small { font-size: 11.5px; color: var(--ink3); font-weight: 400; margin-left: 3px; }
+.card .weight { color: var(--cyan); }
+.card.stays .weight { color: var(--ink2); }
+.title { font-size: 15.5px; font-weight: 600; margin: 0 0 2px; letter-spacing: -.01em; }
+.tag {
+  font: 10.5px var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--ink3);
+  border: 1px solid var(--line2); border-radius: 3px; padding: 2px 7px;
+  display: inline-block; margin-left: 8px; vertical-align: 2px;
+}
+/* THE PROOF THREAD — the other place colour leaves the palette: it LINKS the number to its evidence. */
+.proof {
+  margin: 10px 0 0 120px; padding-left: 15px; position: relative;
+  color: var(--ink2); font-size: 13.8px; max-width: 80ch;
+}
+.proof::before {
+  content: ""; position: absolute; left: 0; top: 3px; bottom: 3px;
+  width: 1px; background: var(--edge); opacity: .5;
+}
+.proof, .lose, .card.stays .why, .verdict .summary { overflow-wrap: anywhere; }
+.proof .src { display: block; font: 10.5px var(--mono); color: var(--ink3); margin-top: 7px; letter-spacing: .04em; }
+.lose { margin: 11px 0 0 120px; font-size: 13.8px; color: var(--ink2); max-width: 80ch; }
+.lose b { color: var(--ink); font-weight: 600; }
+.card.stays .why { margin: 7px 0 0 120px; color: var(--ink2); font-size: 13.8px; max-width: 82ch; }
+.alert {
+  margin: 10px 0 0 120px; font-size: 13.4px; color: var(--ink);
+  border-left: 2px solid var(--edge); padding: 7px 0 7px 13px; max-width: 80ch;
+  background: linear-gradient(90deg, #e0a04a0f, transparent 62%);
+}
+/* The 120px indent aligns the command under the decision card's text. Outside
+   that card (DNS, blocklist) it only leaves a gap on the left. */
+.command { margin: 12px 0 0; max-width: 84ch; }
+.card .command { margin-left: 120px; }
+.command pre {
+  margin: 0; background: var(--bg); border: 1px solid var(--line);
+  border-radius: 6px; padding: 12px 14px; overflow-x: auto;
+  font: 12.4px/1.62 var(--mono); color: var(--ink); white-space: pre; tab-size: 2;
+}
+.command pre .c { color: var(--ink3); }
+.command-bar { display: flex; align-items: center; gap: 10px; margin-top: 7px; }
+button.copy {
+  background: none; border: 1px solid var(--line2); color: var(--ink2);
+  font: 12px var(--mono); padding: 4px 11px; border-radius: 4px; cursor: pointer;
+}
+button.copy:hover { border-color: var(--cyan); color: var(--ink); }
+.command-bar .note { font-size: 12px; color: var(--ink3); }
+
+/* ------------------------------------------------------------------- DNS */
+.warn-box {
+  border: 1px solid var(--edge); border-radius: 10px;
+  padding: 15px 19px; margin-bottom: 15px; background: #e0a04a0d;
+}
+.warn-box h3 { margin: 0 0 8px; font-size: 14px; color: var(--edge); }
+.warn-box ul { margin: 0; padding-left: 19px; color: var(--ink2); font-size: 13.8px; }
+.warn-box li { margin-bottom: 6px; }
+.provider { border: 1px solid var(--line); border-radius: 10px; padding: 15px 19px; margin-bottom: 10px; background: var(--bg2); }
+.provider .head { display: flex; justify-content: space-between; align-items: baseline; gap: 14px; flex-wrap: wrap; }
+.provider .name { font-weight: 600; font-size: 15.5px; }
+.provider .ips { font: 12.5px var(--mono); color: var(--ink3); }
+.provider .blocks { color: var(--ink2); font-size: 13.6px; margin-top: 5px; }
+.provider .note { color: var(--ink3); font-size: 13px; margin-top: 5px; max-width: 76ch; }
+.undo-first { margin-top: 13px; border-left: 2px solid var(--edge); padding-left: 14px; }
+.step {
+  font: 10.5px var(--mono); letter-spacing: .1em; text-transform: uppercase;
+  color: var(--ink3); display: block; margin-bottom: 6px;
+}
+.undo-first .step { color: var(--edge); }
+
+/* ------------------------------------------------------------ wide table */
+/* A table may be wider than the screen — but inside its own scroll container,
+   never pushing the page body sideways. */
+.scrollable { overflow-x: auto; max-width: 100%; }
+table.wide { width: 100%; border-collapse: collapse; font-size: 13.5px; min-width: 520px; }
+table.wide th {
+  text-align: left; font: 600 11px var(--mono); text-transform: uppercase; letter-spacing: .09em;
+  color: var(--ink3); padding: 9px 12px 9px 0; border-bottom: 1px solid var(--line);
+}
+table.wide td { padding: 9px 12px 9px 0; border-bottom: 1px solid var(--bg3); vertical-align: top; }
+table.wide td.num { font-family: var(--mono); text-align: right; padding-right: 20px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+table.wide tr.hidden-row td.name::after {
+  content: "oculto"; font: 10px var(--mono); color: var(--edge);
+  border: 1px solid currentColor; border-radius: 3px; padding: 1px 5px; margin-left: 9px; opacity: .85;
+}
+
+/* ---------------------------------------------------------------- footer */
+footer {
+  position: fixed; bottom: 0; left: 0; right: 0; z-index: 50;
+  background: color-mix(in srgb, var(--bg) 95%, transparent);
+  backdrop-filter: blur(10px); border-top: 1px solid var(--line);
+  padding: 10px 28px; font: 12px var(--mono); color: var(--ink3);
+  display: flex; gap: 22px; align-items: center; flex-wrap: wrap;
+}
+footer b { color: var(--ink); font-weight: 600; }
+footer .eu { color: var(--cyan); }
+footer .balance { margin-left: auto; text-align: right; }
+footer .balance b { color: var(--cyan); }
+
+.empty { color: var(--ink3); font-size: 14px; padding: 22px 0; }
+.loading { color: var(--ink3); font-size: 14px; }
+.loading::after { content: "▍"; animation: pisca 1s steps(2) infinite; margin-left: 2px; }
+@keyframes pisca { 50% { opacity: 0; } }
+[hidden] { display: none !important; }
+button.action {
+  background: var(--cyan); color: #04141c; border: 0; border-radius: 6px;
+  font: 600 13px var(--sans); padding: 9px 18px; cursor: pointer;
+}
+button.action:hover { filter: brightness(1.08); }
+
+@media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+
+@media (max-width: 1080px) {
+  .c2, .c3, .c4, .c5 { grid-column: span 6; }
+  .c6, .c7, .c8, .c9 { grid-column: span 12; }
+}
+@media (max-width: 700px) {
+  main { padding: 18px 16px; } header { padding: 14px 16px 0; } footer { padding: 9px 16px; gap: 12px; }
+  .grid { gap: 11px; }
+  .c2, .c3, .c4, .c5, .c6, .c7, .c8, .c9 { grid-column: span 12; }
+  .weight { min-width: 0; font-size: 18px; }
+  .row { flex-direction: column; gap: 3px; }
+  .proof, .lose, .command, .card .command, .alert, .card.stays .why { margin-left: 0; }
+  footer .balance { margin-left: 0; text-align: left; width: 100%; }
+}
+
+/* ----------------------------------------------------------- blocklist */
+.sets { display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); margin-bottom: 14px; }
+.set {
+  text-align: left; background: var(--bg2); border: 1px solid var(--line);
+  border-radius: 10px; padding: 13px 15px; cursor: pointer; font: inherit; color: var(--ink);
+  display: flex; flex-direction: column; gap: 3px; min-width: 0;
+}
+.set:hover { border-color: var(--cyan); }
+.set b { font-size: 14.5px; font-weight: 600; }
+.set span { font: 11.5px var(--mono); color: var(--ink3); }
+.set i { font-style: normal; font-size: 12.5px; color: var(--ink2); line-height: 1.45; }
+/* "already on the list" is a state, and state never becomes colour: it becomes a dashed border and the sentence itself */
+.set.inside { border-style: dashed; }
+.set.inside i { color: var(--ink3); }
+
+.add-row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 18px; }
+.field {
+  flex: 1 1 240px; min-width: 0; background: var(--bg); color: var(--ink);
+  border: 1px solid var(--line2); border-radius: 6px; padding: 9px 13px; font: 14px var(--mono);
+}
+.field:focus { outline: none; border-color: var(--cyan); }
+.field::placeholder { color: var(--ink3); }
+.field-error { color: var(--edge); font-size: 13px; flex: 1 1 100%; }
+
+.chips { display: flex; flex-wrap: wrap; gap: 6px; max-height: 210px; overflow-y: auto; align-content: flex-start; }
+.chip {
+  display: inline-flex; align-items: center; gap: 7px;
+  background: var(--bg3); border: 1px solid var(--line); border-radius: 5px;
+  padding: 4px 5px 4px 10px; font: 12px var(--mono); color: var(--ink2);
+}
+.chip button {
+  background: none; border: 0; color: var(--ink3); cursor: pointer;
+  font-size: 15px; line-height: 1; padding: 2px 5px; border-radius: 3px;
+}
+.chip button:hover { color: var(--ink); background: var(--line2); }
