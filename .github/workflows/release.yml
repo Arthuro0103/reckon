@@ -89,7 +89,14 @@ jobs:
         run: |
           set -euo pipefail
           chmod +x build/dist/reckon-macos-arm64
-          env -i "$(pwd)/build/dist/reckon-macos-arm64" report > /tmp/report.txt 2>&1 || true
+          # HOME is kept: env -i strips it, and every path this program reads is
+          # derived from it — the first run of this step hung for minutes on a
+          # runner with no HOME rather than failing. PATH stays empty, which is
+          # the thing actually being proved: that no Node is needed.
+          # The outer cap is belt and braces; report.js has its own deadline now.
+          ( env -i HOME="$HOME" "$(pwd)/build/dist/reckon-macos-arm64" report > /tmp/report.txt 2>&1 & 
+            pid=$!; ( sleep 240; kill -9 $pid 2>/dev/null ) & watchdog=$!
+            wait $pid; kill $watchdog 2>/dev/null ) || true
           grep -q "reckon — self report" /tmp/report.txt
           grep -q "supported           true" /tmp/report.txt
           echo "the binary runs with no Node on PATH and reports a supported platform"

@@ -38,20 +38,52 @@ const lines = [];
 const say = (s = '') => lines.push(s);
 const head = (t) => { say(''); say(t); say('-'.repeat(t.length)); };
 
-// Every probe is wrapped. The point of this file is to survive whatever it finds.
+// Every probe is wrapped AND capped. The point of this file is to survive
+// whatever it finds — and a probe that never returns is the one failure mode a
+// report cannot describe, because the report never prints. On the first CI run
+// this hung for minutes on a runner with an unusual home directory: no output,
+// no error, nothing to read. For the person this file exists for, that is a
+// frozen window and no way to tell a slow machine from a broken program.
+const PROBE_MS = 25000;
+const TOTAL_MS = 180000;
+
+function withCap(promise, ms, label) {
+  let t;
+  const capped = new Promise((_, reject) => {
+    t = setTimeout(() => reject(Object.assign(new Error(`gave up after ${Math.round(ms / 1000)}s`), { timedOut: true })), ms);
+    if (t.unref) t.unref();
+  });
+  return Promise.race([promise, capped]).finally(() => clearTimeout(t));
+}
+
 async function probe(label, fn) {
   const t0 = process.hrtime.bigint();
   try {
-    const value = await fn();
+    const value = await withCap(Promise.resolve().then(fn), PROBE_MS, label);
     const ms = Number(process.hrtime.bigint() - t0) / 1e6;
     say(`  ok    ${label.padEnd(34)} ${Math.round(ms)}ms   ${value == null ? '(null — could not find out)' : value}`);
     return value;
   } catch (e) {
     const ms = Number(process.hrtime.bigint() - t0) / 1e6;
-    say(`  FAIL  ${label.padEnd(34)} ${Math.round(ms)}ms   ${String((e && e.message) || e).split('\n')[0].slice(0, 120)}`);
+    const kind = e && e.timedOut ? 'SLOW ' : 'FAIL ';
+    say(`  ${kind} ${label.padEnd(34)} ${Math.round(ms)}ms   ${String((e && e.message) || e).split('\n')[0].slice(0, 120)}`);
     return null;
   }
 }
+
+// A hard deadline for the whole run. Whatever has been collected by then is
+// written and the program exits: a partial report somebody can send beats a
+// complete one that never appears.
+const started = Date.now();
+const deadline = setTimeout(() => {
+  say('');
+  say(`  STOPPED — the whole report hit its ${TOTAL_MS / 1000}s limit and was cut short here.`);
+  say('  Everything above this line is real. Send it anyway: where it stops is itself');
+  say('  the finding.');
+  finish();
+  process.exit(0);
+}, TOTAL_MS);
+if (deadline.unref) deadline.unref();
 
 (async () => {
   say('reckon — self report');
@@ -160,6 +192,11 @@ async function probe(label, fn) {
   say('  Send the whole file. If reckon also showed you a screen, a photo of it');
   say('  alongside this file answers almost any question at once.');
 
+  clearTimeout(deadline);
+  finish();
+})();
+
+function finish() {
   const out = path.join(process.cwd(), 'reckon-report.txt');
   const text = lines.join('\n') + '\n';
   try {
@@ -174,4 +211,4 @@ async function probe(label, fn) {
     console.log(`\nCould not save a file here (${(e && e.message) || e}).`);
     console.log('Copy everything above this line and send it instead.');
   }
-})();
+}
