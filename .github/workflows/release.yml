@@ -108,6 +108,11 @@ jobs:
             build/dist/reckon-windows-x64.exe
             build/dist/SHA256SUMS.txt
           generate_release_notes: true
+          # A tag carrying a hyphen (v0.1.0-rc.1) is published as a pre-release.
+          # The Windows binary in this pipeline has never run on Windows — the
+          # author has no such machine — and a plain "Latest release" badge over
+          # an untested artifact claims a confidence nobody has earned yet.
+          prerelease: ${{ contains(github.ref_name, '-') }}
           body: |
             Download the file for your machine, then see docs/INSTALL.md.
 
