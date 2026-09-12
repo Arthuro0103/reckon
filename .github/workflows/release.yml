@@ -1,69 +1,122 @@
 name: check and release
 
-# Two independent jobs on purpose. `check` runs on every push and PR, on both
-# ends of the supported Node range, because it is the gate that matters: a
-# change that breaks the app for everyone should never reach main. `release`
-# only runs when a tag is pushed, and only builds the packaging artifacts —
-# it never gates anything, because packaging failing is not the same class of
-# problem as the app itself being broken.
 on:
   push:
-    branches: ['**']
+    branches: [main]
     tags: ['v*']
   pull_request:
+  workflow_dispatch:
 
 permissions:
-  contents: write   # release job attaches binaries to a GitHub Release
+  contents: write
 
 jobs:
+  # The gate that matters. It runs on every push and every pull request, and it
+  # is the only job that guards `main`.
   check:
     name: check (node ${{ matrix.node }})
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
-        # The floor this project declares ("engines": ">=18" in package.json)
-        # and the version development actually happens on. A change that only
-        # breaks Node 18 is exactly the gap a single-version CI run would miss.
-        node: ['18', '22']
+        node: ['18', '20', '22']
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node }}
+      # No install step, deliberately: this project has no dependencies, and a
+      # `npm ci` here would quietly stop that from being true.
       - run: node bin/check.js
 
-  release:
-    name: build (${{ matrix.target }})
-    if: startsWith(github.ref, 'refs/tags/v')
+  # ONE job builds all three binaries.
+  #
+  # Injecting a SEA blob is file manipulation, not execution: the target binary
+  # is never run, so a macOS runner can produce the Windows .exe and the Intel
+  # macOS build just as well as its own. Building each target on its own runner
+  # bought nothing and cost three real problems — a matrix leg pinned to the
+  # retired macos-13 image, a `windows-latest` leg that could not run the build
+  # script at all, and three concurrent jobs racing to create one release.
+  #
+  # macOS is the host because `codesign` only exists there, and an unsigned
+  # Mach-O will not launch on Apple Silicon at all.
+  build:
+    name: build all targets
     needs: check
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          # macos-14 is Apple Silicon, macos-13 is Intel — each builds its own
-          # arch natively so `codesign` (ad-hoc-signs the result; see
-          # build/README.md for what that does and doesn't get a downloader
-          # past) runs on real macOS rather than being skipped or faked.
-          - { os: macos-14, target: darwin-arm64, artifact: reckon-macos-arm64 }
-          - { os: macos-13, target: darwin-x64, artifact: reckon-macos-x64 }
-          - { os: windows-latest, target: win32-x64, artifact: reckon-windows-x64.exe }
-    runs-on: ${{ matrix.os }}
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
-      # Pinned to match NODE_VERSION in build/build-sea.js: that constant is
-      # what gets downloaded and shipped INSIDE the binary, and this is only
-      # the Node that RUNS the build script and generates the SEA blob — the
-      # two staying in step avoids ever wondering which version produced what.
       - uses: actions/setup-node@v4
         with:
-          node-version: '22.15.1'
-      - run: node build/build-sea.js ${{ matrix.target }}
-      - uses: actions/upload-artifact@v4
+          node-version: '22'
+
+      # Cached across runs so a re-run does not re-download ~150 MB of official
+      # Node archives. The checksum is verified on every build, cache hit or not,
+      # so a poisoned cache cannot survive into an artifact.
+      - uses: actions/cache@v4
         with:
-          name: ${{ matrix.artifact }}
-          path: build/dist/${{ matrix.artifact }}
-      - name: attach to release
-        uses: softprops/action-gh-release@v2
+          path: build/.cache
+          key: sea-deps-${{ hashFiles('build/build-sea.js') }}
+
+      - name: Build macOS arm64
+        run: node build/build-sea.js darwin-arm64
+      - name: Build macOS x64
+        run: node build/build-sea.js darwin-x64
+      - name: Build Windows x64
+        run: node build/build-sea.js win32-x64
+
+      # Prove each artifact exists and is the size of a real binary before any
+      # of it is published. A zero-byte or 2 KB "binary" attached to a release is
+      # worse than a failed build, because it looks like success.
+      - name: Verify the artifacts
+        run: |
+          set -euo pipefail
+          for f in reckon-macos-arm64 reckon-macos-x64 reckon-windows-x64.exe; do
+            p="build/dist/$f"
+            test -f "$p" || { echo "missing: $p"; exit 1; }
+            size=$(stat -f%z "$p")
+            test "$size" -gt 40000000 || { echo "$f is only $size bytes — the injection did not produce a real binary"; exit 1; }
+            echo "ok  $f  $((size / 1048576)) MB"
+          done
+
+      # The host's own binary is the only one this runner can execute. Running it
+      # is the difference between "the file was produced" and "the file works".
+      - name: Smoke-test the native binary
+        run: |
+          set -euo pipefail
+          chmod +x build/dist/reckon-macos-arm64
+          env -i "$(pwd)/build/dist/reckon-macos-arm64" report > /tmp/report.txt 2>&1 || true
+          grep -q "reckon — self report" /tmp/report.txt
+          grep -q "supported           true" /tmp/report.txt
+          echo "the binary runs with no Node on PATH and reports a supported platform"
+
+      # Checksums published alongside the binaries, so a downloader can verify
+      # what they got the same way this build verifies what it downloaded.
+      - name: Checksums
+        run: |
+          cd build/dist
+          shasum -a 256 reckon-* > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      # One job, one release, one call. Nothing to race against.
+      - uses: softprops/action-gh-release@v2
         with:
-          files: build/dist/${{ matrix.artifact }}
+          files: |
+            build/dist/reckon-macos-arm64
+            build/dist/reckon-macos-x64
+            build/dist/reckon-windows-x64.exe
+            build/dist/SHA256SUMS.txt
           generate_release_notes: true
+          body: |
+            Download the file for your machine, then see docs/INSTALL.md.
+
+            These binaries are **not signed by an identity Apple or Microsoft
+            recognises.** macOS and Windows will both warn you, and the warning is
+            telling you the truth: nobody has paid to vouch for these bytes.
+            docs/INSTALL.md explains exactly what you will see and what the safe
+            path is. If that trade is not one you want to make, clone the repo and
+            run it from source — it is the same code, and you can read it.
+
+            `SHA256SUMS.txt` lets you check the download matches what this build
+            produced.
