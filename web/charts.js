@@ -125,11 +125,16 @@ function tableOf(columns, rows) {
    different shade by size would spend the identity channel repeating what the
    bar's length already says. */
 function bars({ data, unit = 'GB', color = 'var(--s1)', highlight = null, directLabels = 2, height }) {
+  // A count has no decimals, and a datum may carry its own label text. The
+  // second one matters more than it looks: a bar drawn at full width to mean
+  // "no answer" must not print a number beside it, or the chart states a
+  // measurement that was never taken.
+  const allIntegers = data.every((d) => Number.isInteger(d.value));
   const n = data.length;
   const linhaH = 30, topo = 6, esq = 0;
   const height2 = height || topo + n * linhaH + 4;
   const max = Math.max(...data.map((d) => d.value), 0.0001);
-  const width = 600, plotX = 232, plotL = width - plotX - 58;
+  const width = 600, plotX = 232, plotL = width - plotX - 78;  // room for a word, not just a number
 
   const svg = s('svg', { viewBox: `0 0 ${width} ${height2}`, class: 'g-svg', preserveAspectRatio: 'xMidYMin meet' });
 
@@ -148,9 +153,12 @@ function bars({ data, unit = 'GB', color = 'var(--s1)', highlight = null, direct
     g.append(s('text', { x: plotX - 12, y: y + 16, 'text-anchor': 'end', class: 'g-tick' }, d.name));
     // direct labels on the first few only: a number on every point is chaos
     if (i < directLabels || (highlight && highlight(d))) {
-      g.append(s('text', { x: plotX + w + 9, y: y + 16, class: 'g-val' }, `${fmt(d.value)} ${unit}`));
+      const text = d.labelText != null ? d.labelText
+        : `${allIntegers ? d.value : fmt(d.value)} ${unit}`;
+      g.append(s('text', { x: plotX + w + 9, y: y + 16, class: 'g-val' }, text));
     }
-    hover(g, `<b>${d.name}</b><br>${fmt(d.value, 2)} ${unit}${d.note ? '<br><i>' + d.note + '</i>' : ''}`);
+    hover(g, `<b>${d.name}</b><br>${d.labelText != null ? d.labelText : `${fmt(d.value, 2)} ${unit}`}`
+      + (d.note ? '<br><i>' + d.note + '</i>' : ''));
     svg.append(g);
   });
   return svg;
