@@ -1,7 +1,26 @@
 #!/usr/bin/env node
 'use strict';
 // `reckon` starts the panel. `reckon scan` runs a deep scan in the terminal.
+//
+// This is the entry point `npx reckon` runs, on whatever Node the caller
+// happens to have — including one older than the "engines": ">=18" this
+// project declares in package.json. npm does not refuse to run a package
+// whose engines range doesn't match (it only warns, quietly, above output
+// nobody scrolls back to read), so an old Node instead fails several requires
+// deep with something like "SyntaxError: Unexpected token '?'" pointing at a
+// line in lib/ that has nothing wrong with it. Say the real problem in one
+// line before any of that code runs.
+const [major] = process.versions.node.split('.').map(Number);
+if (major < 18) {
+  console.error(
+    `reckon needs Node 18 or newer. You have Node ${process.versions.node}.\n` +
+    'Install a current Node from https://nodejs.org and run this again.'
+  );
+  process.exit(1);
+}
+
 const arg = process.argv[2];
 if (arg === 'scan') require('./scan.js');
 else if (arg === 'check') require('./check.js');
+else if (arg === 'report') require('./report.js');
 else require('../server.js');

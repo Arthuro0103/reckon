@@ -1,5 +1,5 @@
 {
-  "name": "reckon",
+  "name": "@arthuro0103/reckon",
   "version": "0.1.0",
   "description": "A local dashboard that tells you what to do about your Mac's disk and memory — and never deletes anything itself.",
   "license": "MIT",

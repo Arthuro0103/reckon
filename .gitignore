@@ -14,3 +14,11 @@ node_modules/
 *.log
 .env
 .env.*
+
+# build/build-sea.js output: a downloaded Node binary per platform (~80-110MB
+# each), the generated single-file bundle, and the SEA blob. None of this is
+# source — it's rebuilt from server.js + lib/ + web/ on demand, and release.yml
+# builds it fresh for every tagged release rather than committing it here.
+build/.cache/
+build/.gen/
+build/dist/
