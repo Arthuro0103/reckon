@@ -597,6 +597,8 @@ function dns(d) {
   }
   t.append(tb); root.append(el('div', { class: 'scrollable' }, t));
 
+  if (d.health && d.health.length) root.append(resolverHealth(d));
+
   if (state.blocklist) root.append(blocklistSection(state.blocklist));
 
   root.append(el('div', { class: 'section' },
@@ -627,6 +629,94 @@ function dns(d) {
     c.append(open);
     root.append(c);
   }
+}
+
+/* Every resolver the machine is configured to use, asked a real question and
+   timed. This exists because a dead entry in the list is invisible from the
+   outside: the internet still works, pages still open, and only the things
+   pulled from a second hostname — stylesheets, fonts — quietly time out. */
+function resolverHealth(d) {
+  const box = el('div', {});
+  const dead = d.dead || [], slow = d.slow || [];
+
+  box.append(el('div', { class: 'section' },
+    el('h2', {}, 'Is each one actually answering?'),
+    el('p', {}, dead.length
+      ? `${dead.length} of the ${d.health.length} addresses configured here did not answer. A resolver list is failover: every lookup that lands on a dead entry stalls until it gives up.`
+      : `All ${d.health.length} addresses answered. Timings are from one query each, just now.`)));
+
+  const fastest = Math.max(...d.health.filter((h) => h.answered).map((h) => h.ms), 1);
+  box.append(grid(at('c12', card({
+    title: 'Response time per resolver',
+    sub: 'Measured against the machine, one query each. A bar at the far right, or none at all, is the one to remove.',
+    shape: bars({
+      data: d.health.map((h) => ({
+        name: h.ip + (h.owner ? `  (${h.owner})` : ''),
+        // A dead resolver has no time to plot. It gets the full bar and the
+        // boundary colour, because "no answer" is not "slow" — it is a
+        // different kind of thing, and the chart should not imply an ordering.
+        value: h.answered ? h.ms : fastest,
+        // The bar is full width to be impossible to miss, but the label says
+        // what actually happened. Printing "53 ms" next to a server that never
+        // replied would be the chart asserting a measurement nobody took.
+        labelText: h.answered ? `${h.ms} ms` : 'no answer',
+        color: h.answered ? (h.slow ? 'var(--s2)' : 'var(--s1)') : 'var(--edge)',
+        note: h.answered
+          ? `answered in ${h.ms} ms${h.slow ? ' — slow enough to feel on a page with several hostnames' : ''}`
+          : 'did not answer at all. every lookup that lands here stalls.',
+      })), unit: 'ms', directLabels: d.health.length,
+    }),
+    legend: legendOf([
+      { name: 'answering', color: 'var(--s1)' },
+      ...(slow.length ? [{ name: 'slow (over 250 ms)', color: 'var(--s2)' }] : []),
+      ...(dead.length ? [{ name: 'no answer — remove it', color: 'var(--edge)' }] : []),
+    ]),
+    table: tableOf(['Resolver', 'Provider', 'Response'],
+      d.health.map((h) => [h.ip, h.owner || 'unknown', h.answered ? `${h.ms} ms` : 'no answer'])),
+  }))));
+
+  // The fix, built from what was actually measured rather than from a template.
+  if (dead.length || d.stacked) {
+    const wifi = d.services.find((s) => /wi-?fi/i.test(s.service)) || d.services[0];
+    const alive = d.health.filter((h) => h.answered && !h.slow);
+    // Every provider the user already chose that is also answering. Picking one
+    // for them would be guessing at what they wanted blocked; the command needs
+    // a concrete pair, so it takes the first and says the rest are one swap away.
+    const candidates = d.providers.filter((p) => p.ips.length && p.ips.some((ip) => alive.some((a) => a.ip === ip)));
+    const keep = candidates[0] || { ips: ['1.1.1.1', '1.0.0.1'], name: 'Cloudflare (unfiltered)' };
+    const others = candidates.slice(1).map((p) => p.name);
+    box.append(el('div', { class: 'provider' },
+      el('div', { class: 'head' },
+        el('span', { class: 'name' }, 'Reduce the list to one working provider'),
+        el('span', { class: 'ips' }, `${d.health.length} configured now · ${keep.ips.length} is the right number`)),
+      el('div', { class: 'blocks' },
+        el('b', {}, 'Why: '),
+        dead.length
+          ? `${dead.map((x) => x.ip).join(', ')} never answers, and one dead entry slows down every lookup on the machine. `
+          : '',
+        d.stacked
+          ? 'Several providers are stacked on one interface. macOS asks whichever answers first, so this does not combine their filters — it picks one of them at random.'
+          : ''),
+      el('div', { class: 'note' },
+        `The command below keeps ${keep.name} — two addresses from one provider, a primary and a secondary, which is exactly what a resolver list is for. `,
+        others.length
+          ? `You also have ${others.join(' and ')} configured and answering; to keep one of those instead, swap in its two addresses from the list further down. `
+          : '',
+        'What matters is that it is one provider, not which.'),
+      el('div', { class: 'undo-first' },
+        el('span', { class: 'step' }, '1. keep the undo — it puts back exactly what is set now'),
+        commandBlock(`sudo networksetup -setdnsservers ${JSON.stringify(wifi.service)} ${wifi.ips.join(' ')} && sudo dscacheutil -flushcache && sudo killall -HUP mDNSResponder`,
+          'this restores the current list, dead entry included. it is here so nothing is lost by trying.')),
+      el('div', { style: 'margin-top:15px' },
+        el('span', { class: 'step' }, '2. apply'),
+        commandBlock(`sudo networksetup -setdnsservers ${JSON.stringify(wifi.service)} ${keep.ips.join(' ')} && sudo dscacheutil -flushcache && sudo killall -HUP mDNSResponder`,
+          'it will ask for your password. this panel does not type sudo for you.')),
+      el('div', { style: 'margin-top:15px' },
+        el('span', { class: 'step' }, '3. check that it took'),
+        commandBlock(`scutil --dns | grep nameserver | head -4`,
+          'come back to this tab afterwards and every bar should be short.'))));
+  }
+  return box;
 }
 
 /* A blocklist applied through /etc/hosts. This tool keeps the list, generates
