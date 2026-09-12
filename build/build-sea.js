@@ -138,7 +138,7 @@ async function verifyAgainstShasums(archivePath, archiveName) {
   log(`  sha256 ok  ${expected.slice(0, 16)}…`);
 }
 
-// postject, fetched as a tarball and run with THIS node — never through npx.
+// postject, fetched as a tarball and called through its programmatic API.
 // `npx` on Windows is npx.cmd, and since the Node 18.20.2/20.12.2 hardening
 // child_process refuses to run a .cmd without shell:true instead of resolving it
 // through PATHEXT. The old form worked only because it was written and tested on
@@ -147,8 +147,8 @@ async function verifyAgainstShasums(archivePath, archiveName) {
 async function fetchPostject() {
   fs.mkdirSync(CACHE, { recursive: true });
   const dir = path.join(CACHE, `postject-${POSTJECT_VERSION}`);
-  const cli = path.join(dir, 'package', 'dist', 'cli.js');
-  if (fs.existsSync(cli)) { log(`using cached postject ${POSTJECT_VERSION}`); return cli; }
+  const api = path.join(dir, 'package', 'dist', 'api.js');
+  if (fs.existsSync(api)) { log(`using cached postject ${POSTJECT_VERSION}`); return api; }
   const tgz = path.join(CACHE, `postject-${POSTJECT_VERSION}.tgz`);
   if (!fs.existsSync(tgz)) {
     const url = `https://registry.npmjs.org/postject/-/postject-${POSTJECT_VERSION}.tgz`;
@@ -168,8 +168,8 @@ async function fetchPostject() {
   }
   fs.mkdirSync(dir, { recursive: true });
   execFileSync('tar', ['-xf', tgz, '-C', dir]);
-  if (!fs.existsSync(cli)) throw new Error(`postject cli not found at ${cli} after extraction — package layout changed?`);
-  return cli;
+  if (!fs.existsSync(api)) throw new Error(`postject api not found at ${api} after extraction — package layout changed?`);
+  return api;
 }
 
 async function fetchNode(targetKey) {
@@ -429,16 +429,29 @@ async function build(targetKey) {
     execFileSync('codesign', ['--remove-signature', outPath]);
   }
 
-  const postjectCli = await fetchPostject();
+  // postject's CLI needs `commander`; its programmatic API needs only crypto, fs
+
+  // and path — all built-ins. Running the CLI out of the bare tarball failed with
+
+  // MODULE_NOT_FOUND on the first real CI run, because a registry tarball carries
+
+  // a package's code and not its dependencies. Calling inject() directly needs no
+
+  // install step at all, which is also why this stays out of package.json.
+
+  const postjectApi = await fetchPostject();
+
+  const { inject } = require(postjectApi);
 
   log('injecting the SEA blob with postject');
 
-  const postjectArgs = [
-    postjectCli, outPath, 'NODE_SEA_BLOB', blobPath,
-    '--sentinel-fuse', FUSE,
-  ];
-  if (t.os === 'darwin') postjectArgs.push('--macho-segment-name', 'NODE_SEA');
-  execFileSync(process.execPath, postjectArgs, { stdio: 'inherit' });
+  await inject(outPath, 'NODE_SEA_BLOB', fs.readFileSync(blobPath), {
+
+    sentinelFuse: FUSE,
+
+    machoSegmentName: t.os === 'darwin' ? 'NODE_SEA' : undefined,
+
+  });
 
   if (t.os === 'darwin') {
     // Ad-hoc signature (no Apple Developer identity involved: "-" means
