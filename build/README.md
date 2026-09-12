@@ -202,7 +202,7 @@ Two jobs:
   slip through on the maintainer's newer local Node. This gate matters more
   than the release job below: it runs on every push, not just tags.
 - **`release`** — on pushing a tag matching `v*`, builds all three targets on
-  their native runners (`macos-14` for arm64, `macos-13` for Intel, so
+  their native runners (`macos-14` for arm64, `macos-14` for Intel, so
   `codesign` runs on real macOS rather than being skipped or cross-signed;
   `windows-latest` for the `.exe`) and attaches the three binaries to a GitHub
   Release for that tag.
@@ -213,3 +213,39 @@ Link them straight to the release asset for their platform (not the repo, not
 `npm`, not a terminal command) and, for macOS, mention the one right-click
 from the Gatekeeper section above in the release notes — that's the entire
 support burden this adds.
+
+
+## Why one runner builds all three
+
+Injecting a SEA blob is file manipulation, not execution — the target binary is
+never run — so a macOS runner produces the Windows `.exe` and the Intel macOS
+build as readily as its own.
+
+The earlier shape, one runner per target, bought nothing and cost three real
+problems: a leg pinned to the `macos-13` image GitHub retired at the end of 2025,
+a `windows-latest` leg that could not run this script at all (it called `npx`,
+which on Windows is `npx.cmd`, and `child_process` refuses to execute a `.cmd`
+without `shell: true`), and three concurrent jobs racing to create the same
+release — two of them losing with a 422.
+
+macOS is the host for one reason: `codesign` exists only there, and an unsigned
+Mach-O will not launch on Apple Silicon at all.
+
+## What is verified, and what is not
+
+The build downloads an official Node binary and checks it against nodejs.org's
+`SHASUMS256.txt`, on every build, cache hit or not. Those bytes become more than
+99% of an executable this pipeline then signs and publishes under the project's
+name, so an unverified download would turn one bad CDN object into a signed
+artifact with the maintainer's name on it.
+
+**That is a checksum, not a signature.** nodejs.org also publishes
+`SHASUMS256.txt.sig`, and verifying it needs release keys in a keyring this
+script does not carry — so anyone able to serve you a forged archive over TLS
+could serve a matching sums file too. This closes accident and corruption. It
+does not close a determined man-in-the-middle, and it should not be described as
+if it does.
+
+`postject` is fetched from the npm registry as a tarball, checked against the
+integrity hash the registry publishes, and run with the build's own `node`. It is
+never a dependency of this project and never reached through `npx`.

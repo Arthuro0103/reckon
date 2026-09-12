@@ -36,6 +36,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 const https = require('node:https');
+const crypto = require('node:crypto');
 const { execFileSync } = require('node:child_process');
 
 const ROOT = path.join(__dirname, '..');
@@ -46,6 +47,8 @@ const DIST = path.join(__dirname, 'dist');
 // Pinned to the version the target machines for this task run. Bump this
 // alongside the "engines" field in package.json, not independently of it.
 const NODE_VERSION = process.env.RECKON_BUILD_NODE_VERSION || '22.15.1';
+// Pinned: a build that silently changes its injector is not reproducible.
+const POSTJECT_VERSION = '1.0.0-alpha.6';
 const FUSE = 'NODE_SEA_FUSE_fce680ab2cc467b6e072b8b5df1996b2';
 
 // One entry per shippable target. `dist` names the nodejs.org build; `bin`
@@ -89,6 +92,86 @@ function download(url, dest) {
   });
 }
 
+// Read one file from nodejs.org as text. Used for SHASUMS256.txt, the only thing
+// between "the CDN served the right bytes" and "I signed whatever arrived with my
+// own identity and published it under my name".
+function fetchText(url) {
+  return new Promise((resolve, reject) => {
+    https.get(url, { headers: { 'user-agent': 'reckon-build-sea' } }, (res) => {
+      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+        return fetchText(res.headers.location).then(resolve, reject);
+      }
+      if (res.statusCode !== 200) return reject(new Error(`GET ${url} -> ${res.statusCode}`));
+      let body = '';
+      res.setEncoding('utf8');
+      res.on('data', (c) => { body += c; });
+      res.on('end', () => resolve(body));
+    }).on('error', reject);
+  });
+}
+
+const sha256 = (file) => crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
+
+// The downloaded archive becomes more than 99% of an executable this pipeline
+// ad-hoc-signs and attaches to a release under the project's name. Skipping this
+// turns a TLS-intercepting proxy, a poisoned resolver, or one bad CDN object into
+// a signed artifact carrying the maintainer's name.
+//
+// What it proves, and what it does not: the bytes match what nodejs.org's
+// SHASUMS256.txt says, fetched over TLS from the same host. It is NOT a signature
+// check. nodejs.org also publishes SHASUMS256.txt.sig, and verifying that needs
+// release keys in a keyring this script does not carry, so anyone able to forge
+// the archive over TLS could forge the sums file too. This closes accident and
+// corruption, not a determined man-in-the-middle — and saying which is which is
+// the difference between a real guarantee and a comforting one.
+async function verifyAgainstShasums(archivePath, archiveName) {
+  log('verifying the download against nodejs.org SHASUMS256.txt');
+  const text = await fetchText(`https://nodejs.org/dist/v${NODE_VERSION}/SHASUMS256.txt`);
+  const line = text.split('\n').find((l) => l.trim().endsWith(archiveName));
+  if (!line) throw new Error(`${archiveName} is not listed in SHASUMS256.txt for v${NODE_VERSION} — wrong version, or the archive name changed`);
+  const expected = line.trim().split(/\s+/)[0];
+  const actual = sha256(archivePath);
+  if (actual !== expected) {
+    fs.unlinkSync(archivePath);   // never leave a bad archive cached to be reused
+    throw new Error(`checksum mismatch for ${archiveName}\n  expected ${expected}\n  got      ${actual}\nThe cached copy was deleted. Do not ship this.`);
+  }
+  log(`  sha256 ok  ${expected.slice(0, 16)}…`);
+}
+
+// postject, fetched as a tarball and run with THIS node — never through npx.
+// `npx` on Windows is npx.cmd, and since the Node 18.20.2/20.12.2 hardening
+// child_process refuses to run a .cmd without shell:true instead of resolving it
+// through PATHEXT. The old form worked only because it was written and tested on
+// macOS, where npx is a shell script: the Windows leg of this pipeline could
+// never have run. The registry tarball sidesteps the launcher entirely.
+async function fetchPostject() {
+  fs.mkdirSync(CACHE, { recursive: true });
+  const dir = path.join(CACHE, `postject-${POSTJECT_VERSION}`);
+  const cli = path.join(dir, 'package', 'dist', 'cli.js');
+  if (fs.existsSync(cli)) { log(`using cached postject ${POSTJECT_VERSION}`); return cli; }
+  const tgz = path.join(CACHE, `postject-${POSTJECT_VERSION}.tgz`);
+  if (!fs.existsSync(tgz)) {
+    const url = `https://registry.npmjs.org/postject/-/postject-${POSTJECT_VERSION}.tgz`;
+    log(`downloading ${url}`);
+    await download(url, tgz);
+  }
+  // The registry publishes a sha for every tarball; check it for the same reason
+  // the Node archive is checked.
+  const meta = JSON.parse(await fetchText(`https://registry.npmjs.org/postject/${POSTJECT_VERSION}`));
+  const want = ((meta.dist || {}).integrity || '').replace(/^sha512-/, '');
+  if (want) {
+    const got = crypto.createHash('sha512').update(fs.readFileSync(tgz)).digest('base64');
+    if (got !== want) { fs.unlinkSync(tgz); throw new Error('postject tarball failed its integrity check; the cached copy was deleted'); }
+    log('  postject integrity ok');
+  } else {
+    log('  WARNING: the registry returned no integrity hash for postject; proceeding unverified');
+  }
+  fs.mkdirSync(dir, { recursive: true });
+  execFileSync('tar', ['-xf', tgz, '-C', dir]);
+  if (!fs.existsSync(cli)) throw new Error(`postject cli not found at ${cli} after extraction — package layout changed?`);
+  return cli;
+}
+
 async function fetchNode(targetKey) {
   const t = TARGETS[targetKey];
   if (!t) throw new Error(`unknown target '${targetKey}'. known: ${Object.keys(TARGETS).join(', ')}`);
@@ -107,8 +190,12 @@ async function fetchNode(targetKey) {
     const url = `https://nodejs.org/dist/v${NODE_VERSION}/${archiveName}`;
     log(`downloading ${url}`);
     await download(url, archivePath);
+    await verifyAgainstShasums(archivePath, archiveName);
   } else {
     log(`using cached ${archivePath}`);
+    // The cache is re-verified, never trusted: it is a file on disk that
+    // something else may have touched since.
+    await verifyAgainstShasums(archivePath, archiveName);
   }
 
   if (!fs.existsSync(binPath)) {
@@ -342,13 +429,16 @@ async function build(targetKey) {
     execFileSync('codesign', ['--remove-signature', outPath]);
   }
 
-  log('injecting SEA blob with postject (via npx, not a project dependency)');
+  const postjectCli = await fetchPostject();
+
+  log('injecting the SEA blob with postject');
+
   const postjectArgs = [
-    '-y', 'postject', outPath, 'NODE_SEA_BLOB', blobPath,
+    postjectCli, outPath, 'NODE_SEA_BLOB', blobPath,
     '--sentinel-fuse', FUSE,
   ];
   if (t.os === 'darwin') postjectArgs.push('--macho-segment-name', 'NODE_SEA');
-  execFileSync('npx', postjectArgs, { stdio: 'inherit' });
+  execFileSync(process.execPath, postjectArgs, { stdio: 'inherit' });
 
   if (t.os === 'darwin') {
     // Ad-hoc signature (no Apple Developer identity involved: "-" means
@@ -371,7 +461,23 @@ async function main() {
 }
 
 if (require.main === module) {
-  main().catch((e) => { console.error('\nbuild failed: ' + e.message); process.exit(1); });
+  main().catch((e) => {
+    // A build that fails with an empty line wastes an hour. Network errors from
+    // node's https carry a `code` and an empty `message`, which is exactly how
+    // this one first presented: "build failed:" and nothing after the colon.
+    const code = e && e.code ? ` [${e.code}]` : '';
+    const msg = (e && e.message) || '(no message — see the code above)';
+    console.error(`\nbuild failed${code}: ${msg}`);
+    if (e && (e.code === 'EHOSTUNREACH' || e.code === 'ENOTFOUND' || e.code === 'ETIMEDOUT' || e.code === 'ECONNREFUSED')) {
+      console.error('\nThis build needs to reach two hosts:');
+      console.error('  https://nodejs.org        the official Node binary and its SHASUMS256.txt');
+      console.error('  https://registry.npmjs.org  the postject tarball used to inject the blob');
+      console.error('Both are fetched once and cached under build/.cache, so a machine that can');
+      console.error('reach them once can build offline afterwards. Behind a proxy, set HTTPS_PROXY.');
+    }
+    if (e && e.stack && process.env.RECKON_DEBUG) console.error('\n' + e.stack);
+    process.exit(1);
+  });
 }
 
 module.exports = { build, TARGETS, hostTarget, NODE_VERSION };
