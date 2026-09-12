@@ -19,9 +19,23 @@ const read = (f) => fs.readFileSync(path.join(ROOT, f), 'utf8');
 
 const ACCENT = /[áéíóúâêôàãõçÁÉÍÓÚÂÊÔÃÕÇ]/;
 
+// lib/ has subdirectories now (lib/platform/), and readFileSync on a directory
+// throws EISDIR — which would take the whole suite down before the first check
+// ran. Walk instead, and take only .js: CONTRACT.md is documentation, not a
+// contract position.
+function libFiles(dir = 'lib') {
+  const out = [];
+  for (const e of fs.readdirSync(path.join(ROOT, dir), { withFileTypes: true })) {
+    const rel = dir + '/' + e.name;
+    if (e.isDirectory()) out.push(...libFiles(rel));
+    else if (e.name.endsWith('.js')) out.push(rel);
+  }
+  return out.sort();
+}
+
 // 1. Every require resolves. `node --check` resolves no modules at all.
 function requires() {
-  const files = ['server.js', ...fs.readdirSync(path.join(ROOT, 'lib')).map((f) => 'lib/' + f)];
+  const files = ['server.js', ...libFiles()];
   for (const f of files) {
     for (const m of read(f).matchAll(/require\('(\.[^']+)'\)/g)) {
       const target = path.resolve(ROOT, path.dirname(f), m[1]);
@@ -93,14 +107,14 @@ function contracts() {
     }
     if (!dirty) ok(`${kind}s in ${file} carry no accents`);
   }
-  for (const f of fs.readdirSync(path.join(ROOT, 'lib'))) {
-    const lines = read('lib/' + f).split('\n');
+  for (const f of libFiles()) {
+    const lines = read(f).split('\n');
     let dirty = 0;
     lines.forEach((l, i) => {
       const m = l.match(/^\s*([a-zA-Z][a-zA-Z0-9_]*):\s/);
-      if (m && ACCENT.test(m[1])) { fail(`accented object key in lib/${f}:${i + 1} -> ${m[1]}`); dirty++; }
+      if (m && ACCENT.test(m[1])) { fail(`accented object key in ${f}:${i + 1} -> ${m[1]}`); dirty++; }
     });
-    if (!dirty) ok(`lib/${f} has no accented keys`);
+    if (!dirty) ok(`${f} has no accented keys`);
   }
 }
 
@@ -137,10 +151,59 @@ function dnsRecipe() {
     else if (!text.includes('"Wi-Fi"')) fail(`the '${field}' command does not name the service`, text);
     else ok(`the '${field}' command names the service`);
   }
-  if (r.undo.includes('8.8.8.8 8.8.4.4')) ok('undo restores exactly the addresses from before');
+  // Both addresses, in the order they were found in. Tested as two positions
+  // rather than as one literal string: a platform separates a resolver list
+  // with a space and another with a comma, and an assertion that only holds on
+  // the platform this happens to run on is an assertion that stops working the
+  // moment somebody ports the file it is guarding.
+  const first = r.undo.indexOf('8.8.8.8'), second = r.undo.indexOf('8.8.4.4');
+  if (first >= 0 && second > first) ok('undo restores exactly the addresses from before, in order');
   else fail('undo does not restore the original addresses', r.undo);
   if (recipe('Wi-Fi', 'current', ['8.8.8.8']) === null) ok('a provider with no addresses produces no command');
   else fail('the "current" provider should not produce a command');
+
+  // The bug this whole file exists for: a missing service name must stop the
+  // command being built at all. Returning something for it is how the machine
+  // ends up pointed at a resolver called "null".
+  for (const bad of [undefined, '', 'Wi-Fi"; rm -rf /', 'a$(reboot)b']) {
+    let built = null;
+    try { built = recipe(bad, 'adguard', []); } catch { built = 'refused'; }
+    if (built === 'refused') ok(`a service name of ${JSON.stringify(bad)} is refused, not built around`);
+    else fail(`recipe() built a DNS command for the service name ${JSON.stringify(bad)}`, String(built && built.apply));
+  }
+}
+
+// 6b. Every platform implementation covers the whole contract. A capability
+//     that is absent does not fail at load — it fails the moment somebody on
+//     that platform opens the tab that needs it, which is the worst possible
+//     time to find out.
+function platformContract() {
+  const index = read('lib/platform/index.js');
+  const block = (index.match(/const CAPABILITIES = Object\.freeze\(\[([\s\S]*?)\]\)/) || [])[1] || '';
+  const names = [...block.matchAll(/'([a-zA-Z]+)'/g)].map((m) => m[1]);
+  // OPTIONAL capabilities are part of the contract too: a platform may skip them
+  // and stay supported, but exporting one is never "a name the contract does not
+  // list". Reading both lists from the same file keeps them from drifting.
+  const optBlock = (index.match(/const OPTIONAL = Object\.freeze\(\[([\s\S]*?)\]\)/) || [])[1] || '';
+  const optional = [...optBlock.matchAll(/'([a-zA-Z]+)'/g)].map((m) => m[1]);
+  const known = [...names, ...optional];
+  if (!names.length) return fail('could not read the capability list out of lib/platform/index.js');
+  ok(`the contract lists ${names.length} capabilities`);
+
+  // Only the files index.js actually offers a slot for. lib/platform holds
+  // other things now, and a helper is not an implementation.
+  const files = [...index.matchAll(/file: '([a-z0-9]+\.js)'/g)].map((m) => m[1]);
+  for (const file of files) {
+    const full = path.join(ROOT, 'lib/platform', file);
+    if (!fs.existsSync(full)) { ok(`lib/platform/${file} is not written yet (index.js says so)`); continue; }
+    let impl;
+    try { impl = require(full); } catch (e) { fail(`lib/platform/${file} throws on load`, e.message); continue; }
+    const missing = names.filter((n) => typeof impl[n] !== 'function');
+    if (missing.length) fail(`lib/platform/${file} is missing ${missing.length} capability/ies`, missing.join(', '));
+    else ok(`lib/platform/${file} implements all ${names.length}`);
+    const extra = Object.keys(impl).filter((k) => !known.includes(k));
+    if (extra.length) fail(`lib/platform/${file} exports names the contract does not list`, extra.join(', '));
+  }
 }
 
 // 7. The blocklist sieve: anything that gets past it becomes a line in /etc/hosts.
@@ -164,7 +227,7 @@ function blocklistSieve() {
 function safety() {
   const suspect = /execFile\(\s*['"](rm|sudo|networksetup)\b|exec\(\s*['"]\s*(rm|sudo)\b/;
   let dirty = 0;
-  for (const f of ['server.js', ...fs.readdirSync(path.join(ROOT, 'lib')).map((x) => 'lib/' + x)]) {
+  for (const f of ['server.js', ...libFiles()]) {
     if (suspect.test(read(f))) { fail(`${f} appears to run a destructive command directly`); dirty++; }
   }
   if (!dirty) ok('no module runs rm/sudo/networksetup on its own');
@@ -177,15 +240,30 @@ function safety() {
 }
 
 // 9. Nothing personal to the machine that built this is baked into the source.
+//
+//    Two shapes, because a port brings a second one with it. The Windows
+//    pattern is deliberately narrow: it looks for a profile directory under a
+//    drive letter, not for any absolute Windows path. C:\Windows is where the
+//    operating system lives on every machine and says nothing about whose
+//    machine it is — refusing it would push the code into building system
+//    paths out of string fragments, which is worse.
 function noHardcodedPaths() {
-  const files = [...fs.readdirSync(path.join(ROOT, 'lib')).map((f) => 'lib/' + f), 'server.js', 'web/app.js'];
-  const suspect = /\/Users\/(?!\[)[a-z]/i;
+  const files = [...libFiles(), 'server.js', 'web/app.js'];
+  const suspect = [
+    [/\/Users\/(?!\[)[a-z]/i, 'a macOS home directory'],
+    [/\/home\/(?!\[)[a-z]/i, 'a Linux home directory'],
+    [/[A-Za-z]:[\\/]+Users[\\/]+(?!\[)[A-Za-z0-9_.$-]/, 'a Windows profile directory'],
+    [/%USERPROFILE%[\\/]+(?!\[)[A-Za-z0-9_.-]/i, 'an expanded Windows profile path'],
+  ];
   let dirty = 0;
   for (const f of files) {
-    const m = read(f).match(suspect);
-    if (m) { fail(`${f} contains an absolute path to somebody's home directory`, m[0]); dirty++; }
+    const text = read(f);
+    for (const [re, what] of suspect) {
+      const m = text.match(re);
+      if (m) { fail(`${f} contains ${what}`, m[0]); dirty++; }
+    }
   }
-  if (!dirty) ok('no hardcoded home directory anywhere in the source');
+  if (!dirty) ok('no hardcoded home or profile directory anywhere in the source');
 }
 
 (async () => {
@@ -195,6 +273,7 @@ function noHardcodedPaths() {
   console.log('\ncontracts');     contracts();
   console.log('\ncss');           css();
   console.log('\ndns');           dnsRecipe();
+  console.log('\nplatform');      platformContract();
   console.log('\nblocklist');     blocklistSieve();
   console.log('\nsafety');        safety(); noHardcodedPaths();
   console.log(failures ? `\n${failures} FAILURE(S)\n` : '\nall checks passed\n');

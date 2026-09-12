@@ -108,6 +108,11 @@ function overview(c) {
 /* The chart that ties the list of decisions to the number at the top: applying
    them in the recommended order, free space goes from here to there. */
 function chartSteps(c) {
+  // volumeUsage() returns null when the platform cannot read it, and the whole
+  // Overview used to die dereferencing it — a white screen instead of the row
+  // that says the reading did not happen.
+  if (!c.volume) return card({ title: 'The whole disk', sub: 'Could not read how full this volume is.',
+    shape: el('p', { class: 'empty' }, 'no reading') });
   const free = kb2gb(c.volume.freeKB);
   const list = c.panel.out.filter((d) => d.kb > 0).map((d) => ({ name: d.title, value: d.gb }));
   return card({
@@ -121,6 +126,8 @@ function chartSteps(c) {
 }
 
 function chartDiskDonut(c) {
+  if (!c.volume) return card({ title: 'The whole disk', sub: 'Could not read how full this volume is.',
+    shape: el('p', { class: 'empty' }, 'no reading') });
   const used = kb2gb(c.volume.usedKB), free = kb2gb(c.volume.freeKB);
   const total = kb2gb(c.volume.totalKB);
   const lib = c.panel.totalGB;
@@ -676,45 +683,38 @@ function resolverHealth(d) {
   }))));
 
   // The fix, built from what was actually measured rather than from a template.
-  if (dead.length || d.stacked) {
-    const wifi = d.services.find((s) => /wi-?fi/i.test(s.service)) || d.services[0];
-    const alive = d.health.filter((h) => h.answered && !h.slow);
-    // Every provider the user already chose that is also answering. Picking one
-    // for them would be guessing at what they wanted blocked; the command needs
-    // a concrete pair, so it takes the first and says the rest are one swap away.
-    const candidates = d.providers.filter((p) => p.ips.length && p.ips.some((ip) => alive.some((a) => a.ip === ip)));
-    const keep = candidates[0] || { ips: ['1.1.1.1', '1.0.0.1'], name: 'Cloudflare (unfiltered)' };
-    const others = candidates.slice(1).map((p) => p.name);
+  // The repair comes from the server, which knows the platform. Building the
+  // command here shipped `sudo networksetup ...` to every Windows user — an
+  // instruction they cannot run, sitting next to a number that was correct.
+  const fix = d.repair;
+  if (fix) {
     box.append(el('div', { class: 'provider' },
       el('div', { class: 'head' },
         el('span', { class: 'name' }, 'Reduce the list to one working provider'),
-        el('span', { class: 'ips' }, `${d.health.length} configured now · ${keep.ips.length} is the right number`)),
+        el('span', { class: 'ips' }, `${d.health.length} configured now · ${fix.keepIps.length} is the right number`)),
       el('div', { class: 'blocks' },
         el('b', {}, 'Why: '),
         dead.length
-          ? `${dead.map((x) => x.ip).join(', ')} never answers, and one dead entry slows down every lookup on the machine. `
+          ? `${dead.map((x) => x.ip).join(', ')} never answers, and one dead entry slows down every lookup on this machine. `
           : '',
         d.stacked
-          ? 'Several providers are stacked on one interface. macOS asks whichever answers first, so this does not combine their filters — it picks one of them at random.'
+          ? 'Several providers are stacked on one interface. The system asks whichever answers first, so this does not combine their filters — it picks one of them at random.'
           : ''),
       el('div', { class: 'note' },
-        `The command below keeps ${keep.name} — two addresses from one provider, a primary and a secondary, which is exactly what a resolver list is for. `,
-        others.length
-          ? `You also have ${others.join(' and ')} configured and answering; to keep one of those instead, swap in its two addresses from the list further down. `
+        `The command below keeps ${fix.keep} — two addresses from one provider, a primary and a secondary, which is exactly what a resolver list is for. `,
+        fix.others && fix.others.length
+          ? `You also have ${fix.others.join(' and ')} configured and answering; to keep one of those instead, swap in its two addresses. `
           : '',
         'What matters is that it is one provider, not which.'),
       el('div', { class: 'undo-first' },
         el('span', { class: 'step' }, '1. keep the undo — it puts back exactly what is set now'),
-        commandBlock(`sudo networksetup -setdnsservers ${JSON.stringify(wifi.service)} ${wifi.ips.join(' ')} && sudo dscacheutil -flushcache && sudo killall -HUP mDNSResponder`,
-          'this restores the current list, dead entry included. it is here so nothing is lost by trying.')),
+        commandBlock(fix.undo, fix.undoNote)),
       el('div', { style: 'margin-top:15px' },
         el('span', { class: 'step' }, '2. apply'),
-        commandBlock(`sudo networksetup -setdnsservers ${JSON.stringify(wifi.service)} ${keep.ips.join(' ')} && sudo dscacheutil -flushcache && sudo killall -HUP mDNSResponder`,
-          'it will ask for your password. this panel does not type sudo for you.')),
+        commandBlock(fix.apply, fix.applyNote)),
       el('div', { style: 'margin-top:15px' },
         el('span', { class: 'step' }, '3. check that it took'),
-        commandBlock(`scutil --dns | grep nameserver | head -4`,
-          'come back to this tab afterwards and every bar should be short.'))));
+        commandBlock(fix.verify, fix.verifyNote || 'come back to this tab afterwards and every bar should be short.'))));
   }
   return box;
 }

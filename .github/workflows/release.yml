@@ -1,0 +1,69 @@
+name: check and release
+
+# Two independent jobs on purpose. `check` runs on every push and PR, on both
+# ends of the supported Node range, because it is the gate that matters: a
+# change that breaks the app for everyone should never reach main. `release`
+# only runs when a tag is pushed, and only builds the packaging artifacts —
+# it never gates anything, because packaging failing is not the same class of
+# problem as the app itself being broken.
+on:
+  push:
+    branches: ['**']
+    tags: ['v*']
+  pull_request:
+
+permissions:
+  contents: write   # release job attaches binaries to a GitHub Release
+
+jobs:
+  check:
+    name: check (node ${{ matrix.node }})
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        # The floor this project declares ("engines": ">=18" in package.json)
+        # and the version development actually happens on. A change that only
+        # breaks Node 18 is exactly the gap a single-version CI run would miss.
+        node: ['18', '22']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - run: node bin/check.js
+
+  release:
+    name: build (${{ matrix.target }})
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: check
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # macos-14 is Apple Silicon, macos-13 is Intel — each builds its own
+          # arch natively so `codesign` (ad-hoc-signs the result; see
+          # build/README.md for what that does and doesn't get a downloader
+          # past) runs on real macOS rather than being skipped or faked.
+          - { os: macos-14, target: darwin-arm64, artifact: reckon-macos-arm64 }
+          - { os: macos-13, target: darwin-x64, artifact: reckon-macos-x64 }
+          - { os: windows-latest, target: win32-x64, artifact: reckon-windows-x64.exe }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      # Pinned to match NODE_VERSION in build/build-sea.js: that constant is
+      # what gets downloaded and shipped INSIDE the binary, and this is only
+      # the Node that RUNS the build script and generates the SEA blob — the
+      # two staying in step avoids ever wondering which version produced what.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.15.1'
+      - run: node build/build-sea.js ${{ matrix.target }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: build/dist/${{ matrix.artifact }}
+      - name: attach to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: build/dist/${{ matrix.artifact }}
+          generate_release_notes: true
