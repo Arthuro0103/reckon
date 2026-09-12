@@ -312,6 +312,48 @@ function packagedBundle() {
   }
 }
 
+// The target list is the product's judgement made concrete, and until now no
+// check ever loaded it for a platform other than the host — so a Windows target
+// list could throw, or claim something disposable with no account of what is
+// lost, and every test still passed.
+function targetLists() {
+  const platformPath = path.join(ROOT, 'lib/platform');
+  for (const id of ['darwin', 'win32']) {
+    let targets;
+    try {
+      delete require.cache[require.resolve(platformPath)];
+      delete require.cache[require.resolve(path.join(platformPath, id + '.js'))];
+      const real = Object.getOwnPropertyDescriptor(process, 'platform');
+      Object.defineProperty(process, 'platform', { value: id, configurable: true });
+      process.env.LOCALAPPDATA = process.env.LOCALAPPDATA || 'C:\\Users\\test\\AppData\\Local';
+      process.env.APPDATA = process.env.APPDATA || 'C:\\Users\\test\\AppData\\Roaming';
+      targets = require(platformPath).knownCacheTargets();
+      Object.defineProperty(process, 'platform', real);
+      delete require.cache[require.resolve(platformPath)];
+    } catch (e) {
+      fail(`knownCacheTargets() throws on ${id}`, e.message);
+      continue;
+    }
+    if (!Array.isArray(targets) || !targets.length) { fail(`${id} returned no cache targets`); continue; }
+    const everyday = targets.filter((t) => t.everyday);
+    const bad = [];
+    for (const t of targets) {
+      if (!t.id || !t.path || !t.label) bad.push(`${t.id || '(no id)'}: missing id/path/label`);
+      if (!t.lose) bad.push(`${t.id}: no account of what is lost`);
+      if (!['disposable', 'yours', 'unknown'].includes(t.verdict)) bad.push(`${t.id}: verdict '${t.verdict}'`);
+      // A verdict of "cannot judge" must not ship a command: offering one is
+      // recommending an action the tool just said it could not justify.
+      if (t.verdict !== 'disposable' && t.command) bad.push(`${t.id}: verdict '${t.verdict}' but carries a command`);
+    }
+    const ids = targets.map((t) => t.id);
+    const dupes = ids.filter((x, i) => ids.indexOf(x) !== i);
+    if (dupes.length) bad.push(`duplicate ids: ${[...new Set(dupes)].join(', ')}`);
+    if (bad.length) fail(`${id} target list has ${bad.length} problem(s)`, bad.slice(0, 4).join('; '));
+    else ok(`${id}: ${targets.length} targets, ${everyday.length} everyday, all well-formed`);
+    if (!everyday.length) fail(`${id} has no everyday targets — a machine that never ran npm would see almost nothing`);
+  }
+}
+
 (async () => {
   console.log('\nrequires');      requires();
   console.log('\nshared scope');  sharedScope();
@@ -321,6 +363,7 @@ function packagedBundle() {
   console.log('\ndns');           dnsRecipe();
   console.log('\nplatform');      platformContract();
   console.log('\nblocklist');     blocklistSieve();
+  console.log('\ntargets');    targetLists();
   console.log('\npackaging');  packagedBundle();
   console.log('\nsafety');        safety(); noHardcodedPaths();
   console.log(failures ? `\n${failures} FAILURE(S)\n` : '\nall checks passed\n');
