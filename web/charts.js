@@ -406,7 +406,7 @@ function areaChart({ vals, rot, unit, color = 'var(--s1)', height = 132 }) {
 /* =================================================================== ANEL */
 /* Part-to-whole at a glance, <= 6 slices. Not for comparing close values —
    when that is the job, use a bar. */
-function donut({ parts, center, sub, size = 168 }) {
+function donut({ parts, center, sub, size = 168, unit = 'GB' }) {
   const total = parts.reduce((a, p) => a + p.value, 0) || 1;
   const r = size / 2 - 12, ri = r * 0.63, cx = size / 2, cy = size / 2;
   const svg = s('svg', { viewBox: `0 0 ${size} ${size}`, class: 'g-svg donut' });
@@ -422,7 +422,7 @@ function donut({ parts, center, sub, size = 168 }) {
         + ` L${cx + ri * Math.cos(a1)},${cy + ri * Math.sin(a1)}`
         + ` A${ri},${ri} 0 ${bigArc} 0 ${cx + ri * Math.cos(a0)},${cy + ri * Math.sin(a0)} Z`;
       const g = s('g', {}, s('path', { d, fill: p.color }));
-      hover(g, `<b>${p.name}</b><br>${fmt(p.value, 2)} GB · ${((p.value / total) * 100).toFixed(1)}%`);
+      hover(g, `<b>${p.name}</b><br>${p.labelText != null ? p.labelText : `${fmt(p.value, 2)} ${unit}`} · ${((p.value / total) * 100).toFixed(1)}%`);
       svg.append(g);
     }
     angle += slice;
@@ -574,7 +574,10 @@ function indexedLine({ series, height = 210, xLabel = '' }) {
   const allVals = idx.flat();
   let max = Math.max(...allVals, 101), min = Math.min(...allVals, 99);
   const folga = (max - min) * 0.2 || 2;
-  max += folga; min -= folga;
+  // An index is a ratio against the first reading, so it cannot go below zero.
+  // Padding the floor blindly put a -7 gridline under a chart of round trips,
+  // and a gridline asserts that its value is reachable.
+  max += folga; min = Math.max(0, min - folga);
   const n = Math.max(...series.map((se) => se.vals.length));
   const X = (i) => mE + (n < 2 ? pl / 2 : (i / (n - 1)) * pl);
   const Y = (v) => mT + ph - ((v - min) / (max - min || 1)) * ph;

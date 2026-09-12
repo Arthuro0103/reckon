@@ -6,6 +6,7 @@ const scan = require('./lib/scan');
 const self = require('./lib/self');
 const dns = require('./lib/dns');
 const blocklist = require('./lib/blocklist');
+const network = require('./lib/network');
 
 const PORT = process.env.PORT || 4127;
 const WEB = path.join(__dirname, 'web');
@@ -17,6 +18,9 @@ const MAX_POINTS = 120;
 const OPENED = { at: Date.now(), groups: null };
 
 let running = null;   // one deep scan at a time
+// A speed test saturates the link. Two at once spend the data twice AND corrupt
+// each other's numbers, so the second click is refused rather than queued.
+let speedRunning = false;
 
 const TYPES = { '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8',
   '.js': 'text/javascript; charset=utf-8', '.svg': 'image/svg+xml' };
@@ -82,6 +86,22 @@ const server = http.createServer(async (req, res) => {
       if (running) return json(res, { alreadyRunning: true }, 409);
       running = scan.deep();
       try { return json(res, await running); } finally { running = null; }
+    }
+
+    // The Internet tab. collect() only ever touches machines this computer was
+    // already configured to use — the gateway and your own resolvers — so it is
+    // free to run on tab open. The two readings that COST something are separate
+    // routes behind separate buttons, and neither is ever called on load.
+    if (route === '/api/network') return json(res, await network.collect());
+
+    if (route === '/api/network/speed' && req.method === 'POST') {
+      if (speedRunning) return json(res, { alreadyRunning: true }, 409);
+      speedRunning = true;
+      try { return json(res, await network.speedTest()); } finally { speedRunning = false; }
+    }
+
+    if (route === '/api/network/radio' && req.method === 'POST') {
+      return json(res, await network.radio());
     }
 
     if (route === '/api/dns') return json(res, await dns.collect());

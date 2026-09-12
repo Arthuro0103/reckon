@@ -13,10 +13,23 @@ const gb = (n) => (n == null ? '—' : n >= 10 ? n.toFixed(1) : n.toFixed(2));
 const kb2gb = (kb) => (kb || 0) / 1048576;
 const esc = (s) => String(s).replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
 const short = (p) => String(p).replace(/^\/Users\/[^/]+/, '~').replace(/^\/home\/[^/]+/, '~');
-const get = async (u) => { const r = await fetch(u); if (!r.ok && r.status !== 409) throw new Error(u + ' ' + r.status); return r.json(); };
+// A failed call carries the server's own message forward. `GET /api/light 500`
+// tells a person nothing they can act on or send to anybody; the reason the
+// scan threw is the whole content of the failure.
+const get = async (u) => {
+  let r;
+  try { r = await fetch(u); }
+  catch (e) { throw new Error(`${u} — the panel's own server did not answer (${e.message}). It may have stopped.`); }
+  if (!r.ok && r.status !== 409) {
+    let detail = '';
+    try { const b = await r.json(); if (b && b.error) detail = ': ' + b.error; } catch {}
+    throw new Error(`${u} returned ${r.status}${detail}`);
+  }
+  return r.json();
+};
 
-const state = { cache: null, light: null, dns: null, blocklist: null, tab: 'overview' };
-const TABS = ['overview', 'memory', 'disk', 'checks', 'dns'];
+const state = { cache: null, light: null, dns: null, blocklist: null, network: null, tab: 'overview' };
+const TABS = ['overview', 'memory', 'disk', 'internet', 'checks', 'dns'];
 
 const grid = (...f) => el('div', { class: 'grid' }, ...f.filter(Boolean));
 const at = (cls, node) => { node.classList.add(cls); return node; };
@@ -589,6 +602,390 @@ function checks(c) {
   }
 }
 
+/* ============================================================== INTERNET */
+/* THE RULE THIS TAB HOLDS, restated where somebody reads it: every packet it
+   sends goes to a machine this computer was ALREADY configured to use — the
+   router it routes through, and the resolvers it already asks. It never picks
+   an address of its own, and the screen lists what it touched before it charts
+   anything.
+
+   The two readings that cost something — throughput, and the radio — sit
+   behind their own buttons with the price written above each one. Nothing here
+   calls them on open, on load, or on a timer. The speed test moves real data,
+   so it is two clicks: the second one is the consent. */
+
+const roleWord = (a) => {
+  const router = /router/.test(a.role), res = /resolver/.test(a.role);
+  if (router && res) return 'router + resolver';
+  if (router) return 'your router';
+  if (/outside/.test(a.role)) return 'outside';
+  return 'resolver';
+};
+const msTxt = (n) => (n == null ? '—' : n >= 100 ? n.toFixed(0) : n.toFixed(1));
+
+function internet(d) {
+  const root = $('#tab-internet');
+  root.textContent = '';
+  if (!d) { root.append(el('p', { class: 'loading' }, 'timing the first hops — about four seconds')); return; }
+
+  const alive = d.anchors.filter((a) => a.ran && a.received > 0);
+  const outside = d.anchors.find((a) => /outside/.test(a.role)) || null;
+  const gate = d.anchors.find((a) => /router/.test(a.role)) || null;
+
+  /* --- a decision, not a grid of gauges -------------------------------- */
+  const v = d.verdict;
+  root.append(el('div', { class: 'verdict' },
+    el('p', { class: 'headline' }, v.headline),
+    el('p', { class: 'summary' }, v.summary),
+    el('p', { class: 'summary' }, v.more)));
+
+  if (d.problems.length || d.resolverError) {
+    root.append(el('div', { class: 'warn-box' },
+      el('h3', {}, 'Some of this could not be read'),
+      el('ul', {}, ...[...d.problems, d.resolverError].filter(Boolean).map((p) => el('li', {}, p)))));
+  }
+
+  /* --- what left the machine, printed before any chart of it ----------- */
+  root.append(el('div', { class: 'warn-box' },
+    el('h3', {}, 'Everything this tab contacted'),
+    el('ul', {},
+      ...d.anchors.map((a) => el('li', {},
+        el('b', {}, a.ip), ` — ${a.role}. `,
+        a.ran ? `${a.sent} ICMP packets, ${a.received} back.` : 'the ping could not run at all.')),
+      d.noOffNetworkHost
+        ? el('li', {}, 'Nothing past your router was contacted. Every resolver this machine is configured to use lives on your own network, and reckon will not choose an outside address on your behalf.')
+        : null,
+      el('li', {}, el('b', {}, 'That is the entire list. '),
+        'reckon only ever sends a packet to a machine your computer was already configured to use. It contacts no address picked by this tool, and it sends nothing about you anywhere.'))));
+
+  /* --- four numbers, each with what it is a measurement of -------------- */
+  const kind = d.route
+    ? (d.route.kind === 'wi-fi' ? 'Wi-Fi' : d.route.kind === 'wired' ? 'Cable'
+      : d.route.kind === 'tunnel' ? 'Tunnel' : 'Unknown')
+    : '—';
+  const sent = d.anchors.reduce((a, x) => a + (x.sent || 0), 0);
+  const back = d.anchors.reduce((a, x) => a + (x.received || 0), 0);
+  root.append(grid(
+    at('c3', tile('Carrying traffic', kind, d.route ? d.route.interface : '',
+      d.route
+        ? `gateway ${d.route.gateway || 'none'}${d.route.hardwarePort && d.route.kind !== 'unknown' ? ' · ' + esc(d.route.hardwarePort) : ''}`
+        : 'no default route — nothing is')),
+    at('c3', tile('Past your router', outside && outside.received ? msTxt(outside.avgMs) : '—',
+      outside && outside.received ? 'ms' : '',
+      outside && outside.received
+        ? `to ${outside.ip}, ${d.pingCount} packets`
+        : 'not measured — <b>by design</b>, see above')),
+    at('c3', tile('To your router', gate && gate.received ? msTxt(gate.avgMs) : '—',
+      gate && gate.received ? 'ms' : '',
+      gate ? `${gate.ip} — the leg you can act on` : 'no gateway in the routing table')),
+    at('c3', tile('Packets back', `${back}/${sent}`, '',
+      back === sent ? 'none lost, on this many packets' : `${sent - back} never came back`)),
+  ));
+
+  /* --- round trip per address. One colour: these are names, not ranks.
+         A host that did not reply gets the boundary colour and reads
+         "no reply" — a full bar with a number on it would state a
+         measurement nobody took. ------------------------------------- */
+  const worstMs = Math.max(...alive.map((a) => a.avgMs), 1);
+  const ordered = d.anchors.slice().sort((a, b) => (b.avgMs || Infinity) - (a.avgMs || Infinity));
+  const anyDead = d.anchors.some((a) => !a.ran || a.received === 0);
+  root.append(grid(
+    at('c7', card({
+      title: 'Round trip, per address',
+      sub: `${d.pingCount} packets each, sent just now. Your router isolates the leg inside your home — the part you can do something about. Anything past it is the part you can only report.`,
+      shape: bars({
+        data: ordered.map((a) => ({
+          name: `${a.ip}  ·  ${roleWord(a)}`,
+          value: a.ran && a.received > 0 ? a.avgMs : worstMs,
+          labelText: !a.ran ? 'could not run' : a.received > 0 ? `${msTxt(a.avgMs)} ms` : 'no reply',
+          color: a.ran && a.received > 0 ? 'var(--s1)' : 'var(--edge)',
+          note: a.ran && a.received > 0
+            ? `${a.received} of ${a.sent} back · best ${msTxt(a.minMs)} ms, worst ${msTxt(a.maxMs)} ms`
+            : 'nothing came back. some networks drop ICMP on purpose, and then this reads as dead while the web works.',
+        })), unit: 'ms', directLabels: ordered.length,
+      }),
+      legend: legendOf([
+        { name: 'answered', color: 'var(--s1)' },
+        ...(anyDead ? [{ name: 'no reply — the bar is a placeholder, not a time', color: 'var(--edge)' }] : []),
+      ]),
+      table: tableOf(['Address', 'What it is', 'Best', 'Typical', 'Worst', 'Back'],
+        ordered.map((a) => [a.ip, roleWord(a),
+          a.received > 0 ? msTxt(a.minMs) + ' ms' : '—',
+          a.received > 0 ? msTxt(a.avgMs) + ' ms' : '—',
+          a.received > 0 ? msTxt(a.maxMs) + ' ms' : '—',
+          a.ran ? `${a.received}/${a.sent}` : 'did not run'])),
+    })),
+    at('c5', card({
+      title: 'Packets that came back',
+      sub: `${d.pingCount} packets to each of ${d.anchors.length} ${d.anchors.length === 1 ? 'address' : 'addresses'}. Enough to see a path that is broken, not enough to measure a small loss rate — ${sent - back === 0 ? 'and none went missing' : `${sent - back} missing out of ${sent} is a reason to look again, not a percentage`}.`,
+      shape: donut({
+        parts: [
+          { name: 'replied', value: back, color: 'var(--s1)' },
+          { name: 'never came back', value: sent - back, color: 'var(--edge)' },
+        ].filter((p) => p.value > 0),
+        center: sent ? `${Math.round((back / sent) * 100)}%` : '—',
+        sub: 'came back', unit: 'packets', size: 190,
+      }),
+      legend: legendOf([{ name: 'replied', color: 'var(--s1)' },
+        ...(sent - back > 0 ? [{ name: 'lost', color: 'var(--edge)' }] : [])]),
+      table: tableOf(['Address', 'Sent', 'Back', 'Lost'],
+        d.anchors.map((a) => [a.ip, a.sent ?? '—', a.received ?? '—', a.ran ? a.sent - a.received : '—'])),
+    })),
+  ));
+
+  /* --- best / typical / worst: one measure, one axis, three readings of
+         it. This is the chart that shows jitter, which is what a call
+         breaking up actually looks like. ---------------------------- */
+  if (alive.length) {
+    const series = [
+      { name: 'best', color: 'var(--s1)' },
+      { name: 'typical', color: 'var(--s3)' },
+      { name: 'worst', color: 'var(--s2)' },
+    ];
+    const spread = alive.map((a) => a.maxMs - a.minMs);
+    const widest = alive[spread.indexOf(Math.max(...spread))];
+    root.append(grid(at('c12', card({
+      title: 'Best, typical and worst of the same packets',
+      sub: widest && widest.maxMs - widest.minMs > widest.avgMs
+        ? `${widest.ip} swings from ${msTxt(widest.minMs)} ms to ${msTxt(widest.maxMs)} ms across ${d.pingCount} packets. That spread, not the average, is what a call breaking up sounds like.`
+        : 'A wide gap between best and worst on the same address is jitter: the average can look fine while every other packet arrives late.',
+      legend: legendOf(series),
+      shape: groupedBars({
+        groups: alive.map((a) => ({ name: `${a.ip} · ${roleWord(a)}`, values: [a.minMs, a.avgMs, a.maxMs] })),
+        series, unit: 'ms',
+      }),
+      table: tableOf(['Address', 'Best (ms)', 'Typical (ms)', 'Worst (ms)', 'Spread (ms)'],
+        alive.map((a) => [a.ip, msTxt(a.minMs), msTxt(a.avgMs), msTxt(a.maxMs), msTxt(a.maxMs - a.minMs)])),
+    }))));
+  }
+
+  /* --- the session's own history. A point exists because somebody looked;
+         it is not a poller, and the axis label says exactly that. ----- */
+  const hist = d.history || [];
+  if (hist.length >= 2) {
+    const withGate = hist.filter((x) => x.gatewayMs != null);
+    root.append(grid(
+      at('c6', card({
+        title: 'Round trip past your router, over this session',
+        sub: `${hist.length} readings — one for every time you opened this tab. Nothing polls in between.`,
+        shape: areaChart({ vals: hist.map((x) => x.outsideMs), rot: 'Past the router', unit: 'ms' }),
+        table: tableOf(['Reading', 'ms'], hist.map((x, i) => [i + 1, msTxt(x.outsideMs)])),
+      })),
+      withGate.length >= 2 ? at('c6', card({
+        title: 'Which half moved',
+        // Numbers in this sentence are the reading it sits above. An earlier
+        // draft used two invented ones to explain the idea, and on screen an
+        // invented number is indistinguishable from a measured one.
+        sub: `Both legs indexed to their own first reading, so the ${msTxt(withGate[withGate.length - 1].gatewayMs)} ms hop to your router and the ${msTxt(withGate[withGate.length - 1].outsideMs)} ms path past it share one axis honestly. The line that climbs is the half that got worse.`,
+        legend: legendOf([{ name: 'to your router', color: 'var(--s1)' }, { name: 'past it', color: 'var(--s2)' }]),
+        shape: indexedLine({
+          series: [
+            { name: 'to your router', vals: withGate.map((x) => x.gatewayMs), color: 'var(--s1)' },
+            { name: 'past it', vals: withGate.map((x) => x.outsideMs), color: 'var(--s2)' },
+          ], xLabel: `${withGate.length} readings this session · 100 = the first one`,
+        }),
+        table: tableOf(['Reading', 'To router (ms)', 'Past it (ms)'],
+          withGate.map((x, i) => [i + 1, msTxt(x.gatewayMs), msTxt(x.outsideMs)])),
+      })) : null,
+    ));
+  }
+
+  root.append(paidSection(d));
+  root.append(radioSection(d));
+
+  /* --- the findings: nothing gets a row without a fix ------------------- */
+  if (d.findings.length) {
+    root.append(el('div', { class: 'section' },
+      el('h2', {}, 'What to do about it'),
+      el('p', {}, 'Same rule as the Checks tab: no row without a fix, and every row carries the measurement it came from and what it costs to be wrong.')));
+    for (const f of d.findings) {
+      const c = el('div', { class: 'card' + (f.serious ? '' : ' stays') });
+      c.append(el('div', { class: 'row' },
+        el('div', { class: 'weight', style: 'font-size:14px' }, f.serious ? 'now' : 'later'),
+        el('div', {}, el('p', { class: 'title' }, f.title))));
+      c.append(el('div', { class: 'proof' }, f.found));
+      c.append(el('div', { class: 'lose' }, el('b', {}, 'Measured by: '), f.measure));
+      if (f.fix) c.append(el('div', { class: 'lose' }, el('b', {}, 'Fix: '), f.fix));
+      if (f.cost) c.append(el('div', { class: 'lose' }, el('b', {}, 'Cost of acting: '), f.cost));
+      root.append(c);
+    }
+  }
+
+  /* --- and what is deliberately not on this page ------------------------ */
+  if (d.unmeasured.length) {
+    root.append(el('div', { class: 'section' },
+      el('h2', {}, 'Not measured'),
+      el('p', {}, 'Listed rather than left blank, so nothing here reads as "fine" when it was never looked at.')));
+    root.append(el('div', { class: 'warn-box' }, el('h3', {}, 'What this page does not know'),
+      el('ul', {}, ...d.unmeasured.map((u) => el('li', {}, u)))));
+  }
+
+  root.append(el('div', { class: 'command-bar', style: 'margin-top:18px' },
+    el('button', { class: 'copy', onclick: () => loadNetwork(true) }, 'measure again'),
+    el('span', { class: 'note' }, `read ${new Date(d.at).toLocaleTimeString()} · ${d.pingCount} packets per address, nothing since`)));
+}
+
+/* ---------------------------------------------------------------- paid: speed */
+/* Two clicks. The first one reveals the price in full; the second one is the
+   consent. On a hotspot this test costs money, and a single button next to a
+   sentence somebody scrolled past is not consent. */
+function paidSection(d) {
+  const box = el('div', { class: 'provider' });
+  const s = d.speed;
+  box.append(el('div', { class: 'head' },
+    el('span', { class: 'name' }, 'Throughput, and how the link behaves while it is busy'),
+    el('span', { class: 'ips' }, s ? `measured ${new Date(s.at).toLocaleTimeString()}` : 'not measured')));
+  box.append(el('div', { class: 'blocks' }, el('b', {}, 'What it costs: '),
+    `${d.cost.speed.seconds}. ${d.cost.speed.data}`));
+  if (d.cost.speed.warning) box.append(el('div', { class: 'note', style: 'color:var(--edge)' }, d.cost.speed.warning));
+
+  if (d.speedError) box.append(el('div', { class: 'note' }, el('b', {}, 'Last attempt: '), d.speedError));
+
+  const run = el('button', { class: 'copy', style: 'margin-top:12px' }, s ? 'measure again' : 'measure throughput');
+  const arm = () => {
+    run.remove();
+    const go = el('button', { class: 'copy' }, 'yes — run it now');
+    const no = el('button', { class: 'copy' }, 'cancel');
+    const bar = el('div', { class: 'command-bar', style: 'margin-top:12px' }, go, no,
+      el('span', { class: 'note' }, 'this is the click that spends the data'));
+    no.addEventListener('click', () => { bar.remove(); box.append(run); run.textContent = s ? 'measure again' : 'measure throughput'; });
+    go.addEventListener('click', async () => {
+      bar.textContent = '';
+      bar.append(el('span', { class: 'loading' }, 'saturating the link in both directions'));
+      const r = await postNetwork('/api/network/speed');
+      if (r) { state.network = r; internet(r); }
+      else { bar.textContent = ''; bar.append(el('span', { class: 'note' }, 'the request failed. nothing was measured.'), run); }
+    });
+    box.append(bar);
+  };
+  run.addEventListener('click', arm);
+  box.append(run);
+
+  if (s) {
+    const down = s.downBps == null ? null : +(s.downBps / 1e6).toFixed(1);
+    const up = s.upBps == null ? null : +(s.upBps / 1e6).toFixed(1);
+    const rpm = s.responsivenessRpm > 0 ? Math.round(s.responsivenessRpm) : null;
+    const g = grid(
+      down != null && up != null ? at('c6', card({
+        title: 'Down and up',
+        sub: `One axis, one unit. ${s.dataMB != null ? (s.dataMeasured ? `This run moved ${s.dataMB} MB — counted, not estimated.` : `About ${s.dataMB} MB moved, estimated from throughput times duration.`) : ''}`,
+        // Two values, one unit — the same shape the radio card below uses for
+        // exactly the same kind of comparison. Two columns in a 600-unit field
+        // read as a chart with most of its data missing.
+        shape: bars({
+          data: [
+            { name: 'download', value: down, labelText: `${down} Mbps`,
+              note: 'what pages, video and downloads arrive at' },
+            { name: 'upload', value: up, labelText: `${up} Mbps`,
+              note: 'what calls, backups and uploads leave at' },
+          ], unit: 'Mbps', directLabels: 2,
+        }),
+        table: tableOf(['Direction', 'Mbps'], [['download', down], ['upload', up]]),
+      })) : null,
+      rpm ? at('c6', card({
+        title: 'Responsiveness under load',
+        sub: `Round trips per minute achieved while the link was saturated — ${Math.round(60000 / rpm)} ms each. This is the number that answers "it is fast and everything still feels slow". 800 is where the lag stops being noticeable; the arc is capped there, and it is a threshold, not a maximum.`,
+        shape: gauge({ pct: Math.min(100, (rpm / 800) * 100), center: String(rpm), sub: 'RPM of the 800 mark' }),
+        table: tableOf(['Reading', 'Value'], [
+          ['responsiveness', rpm + ' RPM'],
+          ['one round trip, loaded', Math.round(60000 / rpm) + ' ms'],
+          ['one round trip, idle', s.baseRttMs != null ? Math.round(s.baseRttMs) + ' ms' : 'not reported'],
+          ['measured from', s.responsivenessFrom || 'both directions at once'],
+        ]),
+      })) : null,
+    );
+    if (g.childNodes.length) box.append(g);
+  }
+  return box;
+}
+
+/* ---------------------------------------------------------------- paid: radio */
+function radioSection(d) {
+  if (!d.route || d.route.kind === 'wired') return null;
+  const box = el('div', { class: 'provider' });
+  const r = d.radio;
+  box.append(el('div', { class: 'head' },
+    el('span', { class: 'name' }, 'The Wi-Fi link itself'),
+    el('span', { class: 'ips' }, r ? `read ${new Date(r.at).toLocaleTimeString()}` : 'not read')));
+  box.append(el('div', { class: 'blocks' }, el('b', {}, 'What it costs: '),
+    `${d.cost.radio.seconds}. ${d.cost.radio.data}`));
+  if (d.radioError) box.append(el('div', { class: 'note' }, el('b', {}, 'Last attempt: '), d.radioError));
+
+  const run = el('button', { class: 'copy', style: 'margin-top:12px' }, r ? 'read it again' : 'read the radio');
+  run.addEventListener('click', async () => {
+    run.replaceWith(el('span', { class: 'loading' }, 'asking the Wi-Fi card — twelve seconds'));
+    const out = await postNetwork('/api/network/radio');
+    if (out) { state.network = out; internet(out); }
+  });
+  box.append(run);
+
+  if (r) {
+    box.append(grid(
+      r.rateMbps ? at('c7', card({
+        title: 'Negotiated rate against what the standard allows',
+        sub: r.ceilingMbps
+          ? `The ceiling is ${r.phyMode}'s number at ${r.widthMHz} MHz with ${r.streams === 1 ? 'one spatial stream' : `${r.streams} spatial streams` } — the specification's figure, not a reading of this link, and the stream count is inferred from the rate and the MCS index rather than reported by anything.`
+          : `Only the negotiated rate is shown: ${r.ceilingUnknown || 'the standard\'s ceiling could not be derived for this mode.'}`,
+        // The ceiling bar wears an ordinal neutral, NOT a series colour, on
+        // purpose: it is the specification's number, not a reading of this
+        // link, and a full series hue would assert it as an equal
+        // measurement. It fails the categorical checks because it is not a
+        // category; the contrast WARN is discharged the way the rule allows,
+        // with a direct label on both bars and a table view.
+        legend: r.ceilingMbps ? legendOf([
+          { name: 'negotiated now — measured', color: 'var(--s1)' },
+          { name: 'the standard\'s ceiling — a reference, not a reading', color: 'var(--n1)' },
+        ]) : null,
+        shape: bars({
+          data: [
+            { name: 'negotiated now', value: r.rateMbps, color: 'var(--s1)',
+              note: `channel ${r.channel} · ${r.bandGHz} GHz · ${r.widthMHz} MHz · ${r.phyMode}` },
+            ...(r.ceilingMbps ? [{ name: 'the standard allows', value: r.ceilingMbps, color: 'var(--n1)',
+              note: 'from the specification, not from this link' }] : []),
+          ], unit: 'Mbps', directLabels: 2,
+        }),
+        table: tableOf(['Reading', 'Value'], [
+          ['negotiated rate', r.rateMbps + ' Mbps'],
+          ['the standard allows', r.ceilingMbps ? r.ceilingMbps + ' Mbps' : 'not derivable'],
+          ['channel', `${r.channel} (${r.bandGHz} GHz, ${r.widthMHz} MHz)`],
+          ['mode', r.phyMode || '—'],
+          ['spatial streams', r.streams != null ? r.streams + ' (inferred)' : 'unknown'],
+        ]),
+      })) : null,
+      r.snrDb != null ? at('c5', card({
+        title: 'Signal over noise',
+        sub: `${r.rssiDbm} dBm of signal against ${r.noiseDbm} dBm of noise leaves ${r.snrDb} dB of headroom. Under 20 dB the card steps down to slower modulations on purpose — it would rather be slow than lose packets. The bar is scaled to 40 dB, which is a comfortable link, not a maximum.`,
+        shape: el('div', { style: 'padding:14px 0 4px' },
+          meter({ pct: Math.max(0, Math.min(100, (r.snrDb / 40) * 100)), rot: 'headroom', note: `${r.snrDb} dB over the noise floor` }),
+          el('div', { class: 'foot', style: 'margin-top:9px' },
+            `${r.snrDb} dB — ${r.snrDb < 20 ? 'below the 20 dB line where rate starts falling' : 'above the 20 dB line'}`)),
+        table: tableOf(['Reading', 'Value'], [
+          ['signal', r.rssiDbm + ' dBm'], ['noise', r.noiseDbm + ' dBm'], ['headroom', r.snrDb + ' dB'],
+        ]),
+      })) : null,
+    ));
+  }
+  return box;
+}
+
+async function postNetwork(route) {
+  try {
+    const res = await fetch(route, { method: 'POST' });
+    const out = await res.json();
+    if (out && out.alreadyRunning) return null;
+    return out;
+  } catch { return null; }
+}
+
+async function loadNetwork(force) {
+  if (state.network && !force) { internet(state.network); return; }
+  internet(null);
+  try { state.network = await get('/api/network'); } catch (e) { state.network = null; }
+  internet(state.network);
+  const n = state.network?.findings?.filter((f) => f.serious).length;
+  $('#count-internet').textContent = n || '';
+}
+
 /* =================================================================== DNS */
 /* A separate tab on purpose: a bug in the monitor shows a wrong number, a bug
    here leaves the machine without internet. Nothing runs from here. Ever. */
@@ -829,7 +1226,7 @@ async function sendBlocklist(route, body, after) {
     if (!r.ok) { if (after) after(d); return; }
     state.blocklist = d;
     if (after) after(null);
-    dns(state.dns);
+    if (state.network) draw('internet', internet, state.network);
   } catch (e) { if (after) after({ error: e.message }); }
 }
 
@@ -854,11 +1251,23 @@ async function measureSelf() {
 
 /* ------------------------------------------------------------------ tabs */
 function render() {
-  overview(state.cache);
-  memory(state.light);
-  disk(state.cache);
-  checks(state.cache);
-  dns(state.dns);
+  // Each tab draws inside its own try: a payload that breaks one of them used
+  // to leave all five blank, and four of them had nothing wrong with them.
+  const draw = (name, fn, arg) => {
+    try { fn(arg); }
+    catch (e) {
+      const sec = $(`#tab-${name}`);
+      if (sec) { sec.textContent = ''; sec.append(el('div', { class: 'warn-box' },
+        el('h3', {}, `The ${name} tab could not be drawn`),
+        commandBlock(`${name}: ${(e && e.message) || e}`, 'copy this and send it to whoever set the panel up'))); }
+    }
+  };
+  draw('overview', overview, state.cache);
+  draw('memory', memory, state.light);
+  draw('disk', disk, state.cache);
+  draw('checks', checks, state.cache);
+  draw('dns', dns, state.dns);
+  if (state.network) draw('internet', internet, state.network);
   const n = state.cache?.panel?.out?.filter((d) => d.kb > 0).length;
   $('#count-overview').textContent = n || '';
   const g = state.cache?.checks?.items?.filter((i) => i.serious).length;
@@ -875,6 +1284,9 @@ function goTo(tab, noHash) {
   for (const b of document.querySelectorAll('#tabs button')) b.setAttribute('aria-selected', String(b.dataset.tab === tab));
   for (const s of document.querySelectorAll('main section')) s.hidden = s.id !== `tab-${tab}`;
   if (tab === 'memory') refreshLight();
+  // Cheap on purpose: configuration plus five packets to machines this
+  // computer already uses. The two paid readings live behind their buttons.
+  if (tab === 'internet') loadNetwork(false);
   if (tab === 'dns' && !state.dns) {
     Promise.all([get('/api/dns'), get('/api/blocklist')]).then(([d, b]) => {
       state.dns = d; state.blocklist = b; dns(d);
@@ -897,9 +1309,38 @@ document.addEventListener('click', (e) => {
 });
 addEventListener('hashchange', () => goTo(location.hash.slice(1), true));
 
+/* A diagnostic tool that fails silently is worse than no tool: the screen stops
+   at "reading…" and the person has nothing to act on and nothing to send to
+   anybody who could help. This happened for real, on Windows — a blank page
+   with three tabs and a footer of dashes.
+
+   So: every call stands on its own, a failure is printed where the data would
+   have been, and the rest of the panel still comes up. */
+function startupFailure(where, e) {
+  const box = document.querySelector('#tab-overview');
+  const text = `${where}\n${(e && e.message) || e}\n\nreckon ${navigator.userAgent.includes('Windows') ? 'on Windows' : ''}`.trim();
+  box.prepend(el('div', { class: 'warn-box' },
+    el('h3', {}, 'This part did not come up'),
+    el('p', { style: 'color:var(--ink2);font-size:13.8px;margin:0 0 10px' },
+      'The rest of the panel still works. Nothing was changed on the machine — reckon only reads.'),
+    commandBlock(text, 'copy this and send it to whoever set the panel up')));
+  $('#machine-sub').textContent = 'could not read the machine';
+}
+
 (async function start() {
-  state.cache = await get('/api/cache');
-  await refreshLight();
-  render();
+  try { state.cache = await get('/api/cache'); }
+  catch (e) { state.cache = { hasCache: false }; startupFailure('reading the saved scan (/api/cache)', e); }
+
+  try { await refreshLight(); }
+  catch (e) { startupFailure('measuring memory and disk (/api/light)', e); }
+
+  try { render(); }
+  catch (e) { startupFailure('drawing the panel', e); }
+
   if (location.hash.slice(1)) goTo(location.hash.slice(1), true);
 })();
+
+// Anything that still gets through lands on the screen instead of in a console
+// nobody opens.
+addEventListener('error', (e) => { try { startupFailure('a script error', e.error || e.message); } catch {} });
+addEventListener('unhandledrejection', (e) => { try { startupFailure('a request that was never answered', e.reason); } catch {} });

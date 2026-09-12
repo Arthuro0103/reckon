@@ -354,6 +354,83 @@ function targetLists() {
   }
 }
 
+/* The Internet tab's two promises, in test form. Both were written down in
+   lib/network.js and neither one is enforced by anything a reader can see, so
+   a refactor could break either without a symptom on the screen:
+
+     1. collect() runs on tab open. If it ever calls the paid capabilities,
+        opening a tab starts a transfer that costs real money on a hotspot.
+     2. Every address it pings is one this machine was ALREADY configured to
+        use. An earlier draft pinged 1.1.1.1 on every open — a third party the
+        user never chose, and it made this project's own privacy page untrue.
+
+   The test installs a fake platform under require.cache, so it runs the same
+   on a laptop as on a CI runner with no network at all. */
+async function networkPromises() {
+  const platPath = require.resolve('../lib/platform');
+  const dnsPath = require.resolve('../lib/dns');
+  const netPath = require.resolve('../lib/network');
+  const saved = [platPath, dnsPath, netPath].map((k) => [k, require.cache[k]]);
+
+  const pinged = [];
+  let paidCalls = 0;
+  const CONFIGURED = ['192.168.1.1', '9.9.9.9'];
+  require.cache[platPath] = { id: platPath, loaded: true, exports: {
+    id: 'fake', label: 'fake', supported: true,
+    defaultRoute: async () => ({ interface: 'en0', gateway: '192.168.1.1', kind: 'wi-fi', hardwarePort: 'Wi-Fi' }),
+    linkInterfaces: async () => [{ name: 'en0', kind: 'wi-fi', ipv4: '192.168.1.50' }],
+    pingHost: async (ip) => { pinged.push(ip); return { sent: 5, received: 5, lossPct: 0, avgMs: 9, minMs: 8, maxMs: 11, stddevMs: 1 }; },
+    speedTest: async () => { paidCalls++; return { downBps: 1e8, upBps: 1e7, responsivenessRpm: 900 }; },
+    radioLink: async () => { paidCalls++; return { rateMbps: 600, phyFamily: 'ax', widthMHz: 80, mcs: 11, rssiDbm: -50, noiseDbm: -90 }; },
+  } };
+  require.cache[dnsPath] = { id: dnsPath, loaded: true, exports: {
+    collect: async () => ({ effective: { ips: CONFIGURED, intercepted: false, interceptedBy: null }, health: [], dead: [], slow: [] }),
+  } };
+  delete require.cache[netPath];
+
+  try {
+    const net = require('../lib/network');
+    const d = await net.collect();
+
+    if (paidCalls === 0) ok('opening the tab runs neither paid reading');
+    else fail('opening the tab runs a paid reading', `${paidCalls} call(s) to speedTest/radioLink from collect()`);
+
+    const allowed = new Set(['192.168.1.1', ...CONFIGURED]);
+    const strangers = pinged.filter((ip) => !allowed.has(ip));
+    if (!strangers.length) ok(`every address pinged was already configured (${pinged.join(', ')})`);
+    else fail('it contacted an address nobody configured', strangers.join(', '));
+
+    if (d.cost && d.cost.speed && d.cost.speed.data) ok('the price of the speed test is in the payload, for the screen to print');
+    else fail('the payload carries no cost for the speed test');
+
+    if (d.verdict && d.verdict.headline) ok('a verdict is always produced — the tab opens with a decision');
+    else fail('collect() produced no verdict');
+
+    // A finding with no fix is a diagnosis, which this panel does not ship.
+    const mute = (d.findings || []).filter((f) => f.serious && !f.fix);
+    if (!mute.length) ok('no serious finding is shipped without a fix');
+    else fail('a serious finding has no fix', mute.map((f) => f.id).join(', '));
+  } catch (e) {
+    fail('lib/network.js threw during collect()', String(e && e.message));
+  } finally {
+    for (const [k, v] of saved) { if (v) require.cache[k] = v; else delete require.cache[k]; }
+    delete require.cache[netPath];
+  }
+
+  // The paid routes must be POST. A GET is something a browser can be made to
+  // do by a link, a prefetch or a history restore; spending somebody's data
+  // cap must take a deliberate action.
+  const srv = read('server.js');
+  for (const r of ['/api/network/speed', '/api/network/radio']) {
+    const line = srv.split('\n').find((l) => l.includes(`'${r}'`));
+    if (line && /req\.method === 'POST'/.test(line)) ok(`${r} is POST-only`);
+    else fail(`${r} is reachable without POST`, line ? line.trim() : 'route not found');
+  }
+  const cheap = srv.split('\n').find((l) => l.includes("'/api/network'") && !l.includes('speed') && !l.includes('radio'));
+  if (cheap && !/POST/.test(cheap)) ok('/api/network — the cheap read — needs no ceremony');
+  else fail('the cheap read is missing or gated');
+}
+
 (async () => {
   console.log('\nrequires');      requires();
   console.log('\nshared scope');  sharedScope();
@@ -364,6 +441,7 @@ function targetLists() {
   console.log('\nplatform');      platformContract();
   console.log('\nblocklist');     blocklistSieve();
   console.log('\ntargets');    targetLists();
+  console.log('\ninternet');   await networkPromises();
   console.log('\npackaging');  packagedBundle();
   console.log('\nsafety');        safety(); noHardcodedPaths();
   console.log(failures ? `\n${failures} FAILURE(S)\n` : '\nall checks passed\n');
