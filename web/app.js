@@ -160,16 +160,33 @@ function chartKinds(c) {
     const t = by.get(d.kindLabel) || { name: d.kindLabel, value: 0, items: 0 };
     t.value += d.gb; t.items++; by.set(d.kindLabel, t);
   }
-  const parts = [...by.values()].sort((a, b) => b.value - a.value)
-    .map((t, i) => ({ ...t, value: +t.value.toFixed(2), color: `var(--s${i + 1})`,
-      note: `${t.items} ${t.items === 1 ? 'item' : 'items'}` }));
+  // Six slices at most. Past that, adjacent classes blur and the legend wraps to
+  // three lines — so the tail folds into one "Other" rather than inventing a
+  // seventh hue. The folded kinds are named in its tooltip and the table keeps
+  // every one of them, so nothing is hidden, only grouped.
+  const MAX_SLICES = 6;
+  const ranked = [...by.values()].sort((a, b) => b.value - a.value);
+  const head = ranked.slice(0, MAX_SLICES - 1);
+  const tail = ranked.slice(MAX_SLICES - 1);
+  const shown = tail.length > 1
+    ? [...head, {
+        name: `Other (${tail.length} kinds)`,
+        value: tail.reduce((a2, t) => a2 + t.value, 0),
+        items: tail.reduce((a2, t) => a2 + t.items, 0),
+        folded: tail.map((t) => t.name),
+      }]
+    : ranked;
+  const parts = shown.map((t, i) => ({ ...t, value: +t.value.toFixed(2), color: `var(--s${i + 1})`,
+    note: t.folded ? t.folded.join(', ') : `${t.items} ${t.items === 1 ? 'item' : 'items'}` }));
   const biggest = parts[0];
   return card({
     title: 'What kind of leftovers these are',
     sub: `${gb(biggest.value)} GB — ${((biggest.value / c.panel.totalGB) * 100).toFixed(0)}% of the total — is ${biggest.name.toLowerCase()}: it comes back on its own unless the habit changes.`,
     legend: legendOf(parts.map((p) => ({ name: p.name, color: p.color }))),
     shape: pie({ parts }),
-    table: tableOf(['Kind', 'GB', 'Items'], parts.map((p) => [p.name, gb(p.value), p.items])),
+    // The table keeps every kind, unfolded: the pie groups for legibility, it
+    // does not decide what you are allowed to see.
+    table: tableOf(['Kind', 'GB', 'Items'], ranked.map((p) => [p.name, gb(p.value), p.items])),
   });
 }
 
