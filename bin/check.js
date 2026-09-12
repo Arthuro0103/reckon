@@ -144,6 +144,28 @@ function css() {
 // 6. The DNS command pair. The most important test in this file.
 function dnsRecipe() {
   const { recipe } = require(path.join(ROOT, 'lib/dns.js'));
+  // On a platform with no implementation, building a DNS command is SUPPOSED to
+  // throw — the seam refuses to invent one rather than emit something that looks
+  // like a command and is not. That is the design working, and this suite has to
+  // be runnable by a contributor on Linux who has no lib/platform/linux.js. What
+  // gets asserted there instead is that the refusal is actionable.
+  const platform = require(path.join(ROOT, 'lib/platform'));
+  if (platform.supported === false && !/darwin|win32/.test(platform.id)) {
+    const why = String(platform.unsupportedReason || '');
+    if (/lib\/platform\/\w+\.js/.test(why) && /CONTRACT\.md/.test(why)) {
+      ok(`no implementation for ${platform.id}, and the message names the file to write`);
+    } else {
+      fail(`the unsupported message for ${platform.id} does not say which file to write`, why.slice(0, 200));
+    }
+    try {
+      recipe('Wi-Fi', 'adguard', ['8.8.8.8']);
+      fail('building a DNS command on an unimplemented platform should throw, not invent one');
+    } catch (e) {
+      if (e && e.code === 'RECKON_PLATFORM_UNSUPPORTED') ok('a DNS command is refused rather than invented');
+      else fail('the refusal came with the wrong error', String((e && e.message) || e).slice(0, 120));
+    }
+    return;
+  }
   const r = recipe('Wi-Fi', 'adguard', ['8.8.8.8', '8.8.4.4']);
   if (!r) return fail('the DNS recipe was not built');
   for (const [field, text] of [['apply', r.apply], ['undo', r.undo]]) {
