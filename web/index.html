@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>reckon</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230b1a26'/%3E%3Cpath d='M9 23V9h7a4 4 0 010 8H9l9 6' fill='none' stroke='%2319a2b8' stroke-width='2.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
 <link rel="stylesheet" href="/style.css">
 </head>
 <body>
@@ -17,6 +18,7 @@
     <button data-tab="overview" aria-selected="true">Overview<span class="count" id="count-overview"></span></button>
     <button data-tab="memory" aria-selected="false">Memory</button>
     <button data-tab="disk" aria-selected="false">Disk</button>
+    <button data-tab="internet" aria-selected="false">Internet<span class="count" id="count-internet"></span></button>
     <button data-tab="checks" aria-selected="false">Checks<span class="count" id="count-checks"></span></button>
     <span class="spacer"></span>
     <button data-tab="dns" aria-selected="false" class="risky">DNS</button>
@@ -27,6 +29,7 @@
   <section id="tab-overview"></section>
   <section id="tab-memory" hidden></section>
   <section id="tab-disk" hidden></section>
+  <section id="tab-internet" hidden></section>
   <section id="tab-checks" hidden></section>
   <section id="tab-dns" hidden></section>
 </main>

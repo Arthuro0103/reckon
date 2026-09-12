@@ -90,7 +90,13 @@ main { padding: 24px 28px; max-width: 1360px; }
 .g-toggle:hover { border-color: var(--cyan); color: var(--ink); }
 /* card curto numa line alta: centra a forma em vez de deixar um empty embaixo */
 .g-body { flex: 1; min-height: 0; display: flex; flex-direction: column; justify-content: center; }
-.g-svg { width: 100%; height: auto; display: block; overflow: visible; }
+/* A chart is drawn at a designed size and then scaled to its card. Past about
+   1.4x, a 12.5px tick becomes a 29px one and the chart stops looking drawn and
+   starts looking zoomed — which is exactly what a 600-unit viewBox does in a
+   full-width card. The cap holds the type at the size it was designed at and
+   centres what is left; nothing is cropped, because these are viewBoxes and
+   not bitmaps. */
+.g-svg { width: 100%; max-width: 860px; height: auto; display: block; overflow: visible; margin-inline: auto; }
 /* o donut nao precisa crescer com o card: acima de ~300px ele so ocupa tela */
 .g-svg.donut { width: auto; max-width: min(100%, 300px); margin: 0 auto; }
 .g-svg.pie { width: auto; max-width: min(100%, 360px); margin: 0 auto; }
