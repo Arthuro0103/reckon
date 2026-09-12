@@ -413,6 +413,20 @@ async function build(targetKey) {
   // just downloaded for darwin-x64 or win32-x64. That is what makes a single
   // macOS machine able to produce all three targets without emulation.
   log('generating SEA blob');
+  // The blob is produced by the Node running THIS script and read by the Node
+  // being injected. Those must be the same version: a blob built by 22.23.2 and
+  // injected into 22.15.1 produces a binary that does not fail to start — it
+  // SEGFAULTS, with no message, which is exactly how this first appeared in CI.
+  // A segfault teaches nothing; this line says the problem out loud.
+  const running = process.version.replace(/^v/, '');
+  if (running !== NODE_VERSION) {
+    throw new Error(
+      `this script runs on Node ${running} but builds against Node ${NODE_VERSION}.\n` +
+      `The SEA blob format is tied to the version that reads it, so the result would\n` +
+      `segfault rather than report anything. Either run this with Node ${NODE_VERSION},\n` +
+      `or set RECKON_BUILD_NODE_VERSION=${running} to build against the one you have.`);
+  }
+
   execFileSync(process.execPath, ['--experimental-sea-config', configPath], { stdio: 'inherit' });
 
   fs.mkdirSync(DIST, { recursive: true });
