@@ -15,6 +15,25 @@ is what came out of that.
 
 ---
 
+## Who it is for
+
+Anyone with a full disk. Until recently that was not true: reckon only knew how to
+find developer leavings — package caches, `node_modules`, container logs — so on a
+machine that had never run `npm` it opened with "you can free 0.4 GB", which is
+honest and useless.
+
+It now also knows the junk a computer accumulates on its own: browser caches and
+offline site data for eight browsers, Windows Update leftovers, `Windows.old`,
+temporary files, the Recycle Bin, thumbnail and preview caches, Mail attachment
+copies, and iPhone backups. On the developer machine this was written on those
+came to 6.9 GB — on a machine that only browses, they are the whole story.
+
+Two are worth naming because almost nobody knows they exist: a browser's
+**offline site data** had grown to 1.5 GB across 67 sites here, and **iPhone
+backups** are frequently the single largest folder on a Mac. The second is listed
+and never offered for deletion, because it is often the only copy of photos from
+before the last iCloud sync.
+
 ## What it is
 
 Most disk tools show you a treemap and leave the thinking to you. This one opens with a
