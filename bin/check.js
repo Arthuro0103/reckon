@@ -288,6 +288,30 @@ function noHardcodedPaths() {
   if (!dirty) ok('no hardcoded home or profile directory anywhere in the source');
 }
 
+// The binary is what a tester actually runs, and for a while it had exactly one
+// behaviour no matter what they typed: `reckon report` started the server, which
+// never returns. CI read that as a hang; a person reads it as a frozen window.
+// This asserts the bundle carries the report and dispatches on the argument,
+// without needing the network the real build needs.
+function packagedBundle() {
+  let buildSea;
+  try { buildSea = require(path.join(ROOT, 'build/build-sea.js')); }
+  catch (e) { return fail('build/build-sea.js does not load', e.message); }
+  if (typeof buildSea.buildMainScript !== 'function') return fail('build-sea.js no longer exports buildMainScript, so the bundle cannot be checked here');
+  let src;
+  try { src = buildSea.buildMainScript(); } catch (e) { return fail('the bundle could not be generated', e.message); }
+  try { new (require('node:vm').Script)(src); ok('the packaged bundle is syntactically valid'); }
+  catch (e) { return fail('the packaged bundle is not valid JavaScript', e.message); }
+  for (const [needle, what] of [
+    ['"bin/report"', 'bin/report.js is bundled'],
+    ["subcommand === 'report'", 'the binary dispatches on its argument'],
+    ['"server"', 'server.js is bundled'],
+  ]) {
+    if (src.includes(needle)) ok(what);
+    else fail(`the packaged bundle is missing: ${what}`);
+  }
+}
+
 (async () => {
   console.log('\nrequires');      requires();
   console.log('\nshared scope');  sharedScope();
@@ -297,6 +321,7 @@ function noHardcodedPaths() {
   console.log('\ndns');           dnsRecipe();
   console.log('\nplatform');      platformContract();
   console.log('\nblocklist');     blocklistSieve();
+  console.log('\npackaging');  packagedBundle();
   console.log('\nsafety');        safety(); noHardcodedPaths();
   console.log(failures ? `\n${failures} FAILURE(S)\n` : '\nall checks passed\n');
   process.exit(failures ? 1 : 0);

@@ -285,10 +285,20 @@ function resolveId(fromKey, id) {
 }
 
 function buildMainScript() {
-  const files = ['server.js', ...libFiles()];
+  // bin/report.js belongs in the binary, and this is not a nicety. The whole
+  // reason `reckon report` exists is somebody testing on a platform the author
+  // cannot reach — and the binary IS what they run. Leaving it out meant the
+  // binary ignored its argument and started the server instead, which never
+  // returns: the CI smoke test read that as a hang, and the tester would have
+  // read it as a frozen window.
+  const files = ['server.js', 'bin/report.js', ...libFiles()];
   const modules = files.map((f) => {
     const key = f.replace(/\.js$/, '');
     let src = fs.readFileSync(path.join(ROOT, f), 'utf8');
+    // A shebang is legal at the top of a file and a syntax error anywhere else,
+    // and every module here becomes a function body. bin/report.js carries one
+    // because it is also an executable script.
+    src = src.replace(/^#![^\n]*\n/, '');
     if (f === 'server.js') src = embedAssetPatch(src);
     return { key, src };
   });
@@ -344,9 +354,25 @@ function requireModule(key) {
   return mod.exports;
 }
 
-requireModule('server');
+// Dispatch on the argument, the same way bin/reckon does outside the binary.
+// Without this the binary had exactly one behaviour no matter what you typed.
+const subcommand = process.argv[2];
+if (subcommand === 'report') {
+  requireModule('bin/report');
+} else if (subcommand && subcommand !== 'serve') {
+  console.error('reckon: unknown command ' + JSON.stringify(subcommand));
+  console.error('');
+  console.error('  reckon           start the panel and open it in your browser');
+  console.error('  reckon report    write reckon-report.txt describing what worked here');
+  process.exit(2);
+} else {
+  requireModule('server');
+}
 
-// Tier 3: behave like an app, not a terminal program. server.js prints its
+// Tier 3: behave like an app, not a terminal program. Only when serving —
+// opening a browser during a report run would be nonsense.
+if (!subcommand || subcommand === 'serve') {
+// server.js prints its
 // own "listening" line synchronously off the .listen() callback; we don't
 // have a hook into that from out here without editing the shared file, so
 // this opens the browser a beat later instead of coupling to that callback.
@@ -362,6 +388,7 @@ setTimeout(() => {
   const args = platform === 'win32' ? ['/c', 'start', '""', url] : [url];
   execFile(opener, args, () => { /* no browser to open to, e.g. a headless CI smoke test — the server still runs */ });
 }, 700);
+}
 `;
 }
 
@@ -507,4 +534,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { build, TARGETS, hostTarget, NODE_VERSION };
+module.exports = { build, TARGETS, hostTarget, NODE_VERSION, buildMainScript };
