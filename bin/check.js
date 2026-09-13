@@ -431,6 +431,100 @@ async function networkPromises() {
   else fail('the cheap read is missing or gated');
 }
 
+/* The class of bug that took the Memory tab down on Windows: lib/platform
+   returns null to mean "this system does not publish that counter", the screen
+   treated it as a number, and `.toLocaleString()` on null killed the tab. The
+   panel ran on the machine it was written on, so nothing caught it here.
+
+   This renders every tab inside a fake DOM against a payload where every field
+   the contract is allowed to null IS null, and where the system process group
+   carries a Windows label rather than a macOS one. A tab that throws fails.
+   The DOM is fake, which is the point — what breaks in this class is
+   arithmetic and property access on the data, not layout. */
+function crossPlatformRender() {
+  const vm = require('node:vm');
+  const no = () => ({ setAttribute() {}, append() {}, appendChild() {}, prepend() {}, addEventListener() {},
+    style: {}, dataset: {}, classList: { add() {}, remove() {} }, childNodes: [], replaceWith() {}, remove() {},
+    getBoundingClientRect: () => ({ left: 0, top: 0, width: 100, height: 10 }),
+    querySelector: () => no(), querySelectorAll: () => [], hidden: false,
+    get textContent() { return ''; }, set textContent(v) {}, get innerHTML() { return ''; }, set innerHTML(v) {} });
+  const ctx = {
+    console: { log() {}, error() {} }, window: {}, Date, Math, JSON, Promise, setTimeout,
+    Set, Map, Array, Object, Number, String, RegExp, Error, isNaN, parseInt, parseFloat, Infinity,
+    document: { createElement: no, createElementNS: no, createTextNode: no, body: no(),
+      querySelector: () => no(), querySelectorAll: () => [], addEventListener() {} },
+    addEventListener() {}, innerWidth: 1200, location: { hash: '' },
+    navigator: { platform: 'Win32', userAgent: 'Windows' },
+    fetch: () => Promise.resolve({ ok: true, json: () => ({ hasCache: false }) }),
+  };
+  ctx.window = ctx; ctx.globalThis = ctx;
+  vm.createContext(ctx);
+  for (const f of ['web/charts.js', 'web/app.js']) {
+    try { vm.runInContext(read(f), ctx, { filename: f }); }
+    catch (e) { return fail('the front end did not load in the fake DOM', e.message); }
+  }
+
+  const GB = 1073741824;
+  // Every value here that is null is null BY CONTRACT on at least one supported
+  // platform. Filling any of them with a zero is what this test exists to stop.
+  const light = {
+    memory: {
+      totalBytes: 8 * GB,
+      vm: { wired: GB, active: 2 * GB, compressed: 0, inactive: GB, free: 3 * GB,
+        compressions: null, decompressions: null, swapins: null, swapouts: null },
+      swap: null,                                   // a machine with the page file off
+      groups: [
+        { name: 'Windows (system)', rssKB: 900000, n: 120, cpu: 2 },
+        { name: 'Opera', rssKB: 700000, n: 14, cpu: 5 },
+      ],
+      processCount: 134, rssSumKB: 1600000, note: 'note', at: 1,
+    },
+    volume: { usedKB: 100000000, freeKB: 50000000 },
+    history: [], opened: { groups: null }, at: 1,
+  };
+  const cache = {
+    hasCache: true, at: 1, volume: light.volume, memory: light.memory,
+    panel: { totalGB: 0, out: [], stay: [] },
+    checks: { items: [] },
+    docker: { running: false, logs: [], folders: null, counted: null },
+    repos: [], hidden: [], home: [],
+  };
+  const net = {
+    at: 1, supported: true, problems: [], route: null, interfaces: [], anchors: [],
+    pingCount: 5, noOffNetworkHost: true, resolvers: null, resolverError: null,
+    tunnels: [], history: [], radio: null, speed: null,
+    cost: { speed: { seconds: 's', data: 'd', warning: null }, radio: { seconds: 's', data: 'd', warning: null } },
+    findings: [], verdict: { headline: 'h', summary: 's', more: 'm', link: 'l' }, unmeasured: [],
+  };
+  const dnsPayload = {
+    services: [{ service: 'Wi-Fi', ips: [], inherited: true }],
+    effective: { ips: [], intercepted: false, interceptedBy: null },
+    warnings: [], providers: [], health: [], dead: [], slow: [], stacked: false, repair: null,
+  };
+
+  for (const [name, arg] of [['memory', light], ['overview', cache], ['disk', cache],
+    ['checks', cache], ['internet', net], ['dns', dnsPayload]]) {
+    const fn = ctx[name];
+    if (typeof fn !== 'function') { fail(`${name}() is not reachable`); continue; }
+    try { fn(arg); ok(`${name} survives a payload where every nullable field is null`); }
+    catch (e) { fail(`${name} throws when the platform could not measure something`, e.message); }
+    try { fn(null); ok(`${name} survives having no payload at all`); }
+    catch (e) { fail(`${name} throws on a missing payload`, e.message); }
+  }
+
+  // The system process group is named for the platform. A hardcoded
+  // 'macOS (system)' made the Memory tab tell a Windows user to quit Windows.
+  // Comments are stripped first: the fix for this very bug carries the old
+  // string in a comment explaining why it is gone, and a test that cannot tell
+  // a comment from code fails on its own documentation.
+  const app = read('web/app.js')
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .split('\n').filter((l) => !l.trim().startsWith('//')).join('\n');
+  const hard = app.match(/'macOS \(system\)'/g);
+  if (!hard) ok("the front end does not hardcode 'macOS (system)'");
+  else fail("the front end hardcodes 'macOS (system)'", `${hard.length} occurrence(s) — a Windows machine labels it 'Windows (system)'`);
+}
+
 (async () => {
   console.log('\nrequires');      requires();
   console.log('\nshared scope');  sharedScope();
@@ -441,6 +535,7 @@ async function networkPromises() {
   console.log('\nplatform');      platformContract();
   console.log('\nblocklist');     blocklistSieve();
   console.log('\ntargets');    targetLists();
+  console.log('\ncross-platform'); crossPlatformRender();
   console.log('\ninternet');   await networkPromises();
   console.log('\npackaging');  packagedBundle();
   console.log('\nsafety');        safety(); noHardcodedPaths();
