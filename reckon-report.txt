@@ -36,7 +36,7 @@ Capabilities, one at a time
   A capability that returns null did not find out — that is a valid answer.
   A capability that FAILs is the bug worth reporting.
 
-  FAIL  memoryStats                        3ms   reckon does not run on Linux yet.
+  FAIL  memoryStats                        4ms   reckon does not run on Linux yet.
   FAIL  swapStats                          0ms   reckon does not run on Linux yet.
   FAIL  processList                        0ms   reckon does not run on Linux yet.
   FAIL  volumeUsage                        0ms   reckon does not run on Linux yet.
@@ -52,8 +52,8 @@ Capabilities, one at a time
 
 The product itself
 ------------------
-  FAIL  light scan                         3ms   reckon does not run on Linux yet.
-  ok    server starts on a free port       6ms   yes (tried port 53001)
+  FAIL  light scan                         4ms   reckon does not run on Linux yet.
+  ok    server starts on a free port       7ms   yes (tried port 53206)
 
 What to do with this
 --------------------
