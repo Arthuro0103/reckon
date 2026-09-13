@@ -40,6 +40,24 @@ const tile = (label, value, unit, foot) => el('div', { class: 'g-card' },
     foot ? el('div', { class: 'foot', html: foot }) : null));
 
 /* ------------------------------------------------------------------ command */
+/* WHERE TO PASTE IT. This is not decoration.
+
+   Somebody pasted a command from this panel into Command Prompt — which is
+   what Windows offers when you search for "prompt" — and got back
+   "'Remove-Item' is not recognized as an internal or external command". The
+   command was right. The panel had never said which shell it was written for,
+   and that error does not hint at the answer.
+
+   A panel whose entire contract is "I print the command, you run it" has to
+   say where to run it, and has to name the symptom of getting it wrong so the
+   error itself becomes the answer. */
+function shellNote() {
+  const sh = state.light?.shell || state.cache?.shell;
+  if (!sh || !sh.notThis) return null;
+  return el('div', { class: 'shell-note' },
+    el('b', {}, `Paste this into ${sh.name}`), ` — not ${sh.notThis}. ${sh.open}`);
+}
+
 function commandBlock(text, note) {
   if (!text) return null;
   const html = esc(text).split('\n')
@@ -49,7 +67,7 @@ function commandBlock(text, note) {
     try { await navigator.clipboard.writeText(text); btn.textContent = 'copied'; setTimeout(() => (btn.textContent = 'copy'), 1400); }
     catch { btn.textContent = 'select and copy'; }
   } }, 'copy');
-  return el('div', { class: 'command' }, pre,
+  return el('div', { class: 'command' }, pre, shellNote(),
     el('div', { class: 'command-bar' }, btn, el('span', { class: 'note' }, note || 'this panel runs nothing. you run it.')));
 }
 
@@ -87,6 +105,20 @@ function overview(c) {
 
   const age = Math.round((Date.now() - c.at) / 60000);
   const nothing = !out.length;
+  // Said once, at the top, before any command is reached. The exact error
+  // Windows prints is quoted so that somebody who has already hit it
+  // recognises their own screen here instead of wondering what they broke.
+  const sh = c.shell || state.light?.shell;
+  if (sh && sh.notThis) {
+    root.append(el('div', { class: 'warn-box' },
+      el('h3', {}, `Every command here is ${sh.name}`),
+      el('ul', {},
+        el('li', {}, el('b', {}, `Not ${sh.notThis}. `), sh.open),
+        el('li', {}, `If you paste one and see `, el('b', {}, '"is not recognized as an internal or external command"'),
+          ` — or, in Portuguese, `, el('b', {}, '"não é reconhecido como um comando interno ou externo"'),
+          `, nothing is wrong with the command and nothing happened to your machine. You are in ${sh.notThis}. Open ${sh.name} and paste it again.`),
+        el('li', {}, `A few commands below say they need an administrator. For those: ${sh.openAdmin || sh.open}`))));
+  }
   root.append(el('div', { class: 'verdict' },
     nothing
       ? el('p', { class: 'headline' }, 'Nothing here is worth deleting.')
