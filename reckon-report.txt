@@ -1,0 +1,61 @@
+reckon — self report
+====================
+
+Send this whole file back to whoever asked you to run it. It describes what
+this program could and could not measure on this machine. It contains no file
+names, no addresses you visit, and nothing from inside your documents — you
+are welcome to read it first, and you should.
+
+This machine
+------------
+  platform            linux arm64
+  os release          25.6.0
+  node                v22.15.1
+  packaged binary     no — running from a Node install
+  cpus                10
+  total ram           16.0 GB
+
+Platform layer
+--------------
+  implementation      Linux (linux)
+  supported           false
+  reason:
+    reckon does not run on Linux yet.
+    
+      platform   linux
+      missing    lib/platform/linux.js
+      contract   lib/platform/CONTRACT.md   (30 capabilities, exact return shapes and units)
+      reference  lib/platform/darwin.js     (the macOS implementation, one function per capability)
+    
+    Write lib/platform/linux.js against the contract and reckon runs.
+    Nothing else reads the machine directly — every collector goes through this seam.
+  optional missing    defaultRoute, linkInterfaces, pingHost, radioLink, speedTest, dirSizesKB
+
+Capabilities, one at a time
+---------------------------
+  A capability that returns null did not find out — that is a valid answer.
+  A capability that FAILs is the bug worth reporting.
+
+  FAIL  memoryStats                        3ms   reckon does not run on Linux yet.
+  FAIL  swapStats                          0ms   reckon does not run on Linux yet.
+  FAIL  processList                        0ms   reckon does not run on Linux yet.
+  FAIL  volumeUsage                        0ms   reckon does not run on Linux yet.
+  FAIL  listDirectory(home)                0ms   reckon does not run on Linux yet.
+  FAIL  dirSizeKB(home/.cache)             0ms   reckon does not run on Linux yet.
+  FAIL  likelyCodeDirs                     0ms   reckon does not run on Linux yet.
+  FAIL  findSymlinksUnder                  1ms   reckon does not run on Linux yet.
+  FAIL  backupStatus                       0ms   reckon does not run on Linux yet.
+  FAIL  dnsServices                        0ms   reckon does not run on Linux yet.
+  FAIL  effectiveResolver                  0ms   reckon does not run on Linux yet.
+  FAIL  hostsFilePath                      0ms   reckon does not run on Linux yet.
+  FAIL  setDnsCommand (built, not run)     0ms   reckon does not run on Linux yet.
+
+The product itself
+------------------
+  FAIL  light scan                         3ms   reckon does not run on Linux yet.
+  ok    server starts on a free port       6ms   yes (tried port 53001)
+
+What to do with this
+--------------------
+  Send the whole file. If reckon also showed you a screen, a photo of it
+  alongside this file answers almost any question at once.
