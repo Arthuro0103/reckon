@@ -208,7 +208,9 @@ function platformContract() {
   // list". Reading both lists from the same file keeps them from drifting.
   const optBlock = (index.match(/const OPTIONAL = Object\.freeze\(\[([\s\S]*?)\]\)/) || [])[1] || '';
   const optional = [...optBlock.matchAll(/'([a-zA-Z]+)'/g)].map((m) => m[1]);
-  const known = [...names, ...optional];
+  const decBlock = (index.match(/const DECLARATIONS = Object\.freeze\(\[([\s\S]*?)\]\)/) || [])[1] || '';
+  const declarations = [...decBlock.matchAll(/'([A-Za-z_]+)'/g)].map((m) => m[1]);
+  const known = [...names, ...optional, ...declarations];
   if (!names.length) return fail('could not read the capability list out of lib/platform/index.js');
   ok(`the contract lists ${names.length} capabilities`);
 
@@ -663,6 +665,44 @@ async function batchSizing() {
   }
 }
 
+/* A correct command pasted into the wrong shell fails with an error that does
+   not name the cause. This asserts the panel always says which shell, and that
+   the commands a platform prints are actually written for the shell it names. */
+function whichShell() {
+  const platforms = [['darwin', require('../lib/platform/darwin')]];
+  try { platforms.push(['win32', require('../lib/platform/win32')]); } catch {}
+
+  for (const [name, mod] of platforms) {
+    const sh = mod.COMMAND_SHELL;
+    if (sh && sh.name && sh.open) ok(`${name} declares which shell its commands are for (${sh.name})`);
+    else { fail(`${name} does not declare a shell for its commands`); continue; }
+
+    // Windows is the platform where getting it wrong is silent and likely:
+    // searching "prompt" offers Command Prompt, and every command here is
+    // PowerShell. It must name the one to avoid.
+    if (name === 'win32') {
+      if (sh.notThis) ok('win32 names the shell that will NOT work');
+      else fail('win32 does not warn about Command Prompt');
+      if (sh.openAdmin) ok('win32 says how to open it as administrator');
+      else fail('win32 has commands needing administrator and no way to say how');
+
+      // PowerShell cmdlets in a command the panel claims is PowerShell.
+      const cmds = mod.knownCacheTargets().map((t) => t.command).filter((c) => c && /^[A-Z]/m.test(c));
+      const posix = cmds.filter((c) => /^\s*(rm|rmdir|del)\s/m.test(c));
+      if (!posix.length) ok('no win32 command is a unix one in disguise');
+      else fail('a win32 command is not PowerShell', posix[0].slice(0, 60));
+    }
+  }
+
+  // The screen has to actually use it. A declaration nothing reads is a comment.
+  const app = read('web/app.js');
+  if (/shellNote\(\)/.test(app) && /commandBlock\([\s\S]{0,200}?shellNote/.test(app.replace(/\n/g, ' '))
+      || /pre, shellNote\(\)/.test(app)) ok('every command block carries the shell note');
+  else fail('the shell note is declared but not attached to the command blocks');
+  if (/notThis/.test(app)) ok('the screen names the shell that will not work');
+  else fail('the screen never mentions the wrong shell');
+}
+
 (async () => {
   console.log('\nrequires');      requires();
   console.log('\nshared scope');  sharedScope();
@@ -673,6 +713,7 @@ async function batchSizing() {
   console.log('\nplatform');      platformContract();
   console.log('\nblocklist');     blocklistSieve();
   console.log('\ntargets');    targetLists();
+  console.log('\nwhich shell'); whichShell();
   console.log('\nbatch sizing'); await batchSizing();
   console.log('\ngrouping');   grouping();
   console.log('\ncross-platform'); crossPlatformRender();

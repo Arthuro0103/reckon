@@ -210,6 +210,14 @@ main { padding: 24px 28px; max-width: 1360px; }
   font: 12.4px/1.62 var(--mono); color: var(--ink); white-space: pre; tab-size: 2;
 }
 .command pre .c { color: var(--ink3); }
+/* Where to paste it. Sits between the command and the copy button on purpose:
+   it is the last thing read before the click that matters. */
+.shell-note {
+  margin-top: 7px; font-size: 12.8px; color: var(--ink2);
+  border-left: 2px solid var(--edge); padding: 2px 0 2px 11px;
+}
+.shell-note b { color: var(--edge); font-weight: 600; }
+
 .command-bar { display: flex; align-items: center; gap: 10px; margin-top: 7px; }
 button.copy {
   background: none; border: 1px solid var(--line2); color: var(--ink2);
