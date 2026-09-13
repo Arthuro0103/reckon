@@ -1005,27 +1005,38 @@ function asUnsupportedPlatform() {
   fail('the suite fails on a platform with no implementation — CI will fail', why.trim().slice(0, 160));
 }
 
+/* A suite that dies tells you less than one that reports. An unhandled
+ * rejection here printed an error object with no stack and no test name, three
+ * times over, and finding which line produced it cost more than the bug did.
+ * Every step runs inside its own guard: a throw becomes a named FAIL and the
+ * rest of the suite still runs. */
+async function step(name, fn) {
+  console.log('\n' + name);
+  try { await fn(); }
+  catch (e) { fail(`${name} threw instead of reporting`, String((e && e.stack) || e).split('\n').slice(0, 3).join(' | ')); }
+}
+
 (async () => {
-  console.log('\nrequires');      requires();
-  console.log('\nany platform'); loadsOnAnyPlatform();
-  console.log('\nshared scope');  sharedScope();
-  console.log('\nselectors');     selectors();
-  console.log('\ncontracts');     contracts();
-  console.log('\ncss');           css();
-  console.log('\ndns');           dnsRecipe();
-  console.log('\nplatform');      platformContract();
-  console.log('\nblocklist');     blocklistSieve();
-  console.log('\ntargets');    targetLists();
-  console.log('\nlast round'); lastRound(); await backupLadder(); readmeIsTrue();
-  console.log('\nonly here');  await onlyHere();
-  console.log('\nwhich shell'); whichShell();
-  console.log('\nbatch sizing'); await batchSizing();
-  console.log('\ngrouping');   grouping();
-  console.log('\ncross-platform'); crossPlatformRender();
-  console.log('\ninternet');   await networkPromises();
-  console.log('\npackaging');  packagedBundle();
-  console.log('\nsafety');        safety(); noHardcodedPaths();
-  if (!process.env.RECKON_CHECK_CHILD) { console.log('\nother platforms'); asUnsupportedPlatform(); }
+  await step('requires', async () => { await requires(); });
+  await step('any platform', async () => { await loadsOnAnyPlatform(); });
+  await step('shared scope', async () => { await sharedScope(); });
+  await step('selectors', async () => { await selectors(); });
+  await step('contracts', async () => { await contracts(); });
+  await step('css', async () => { await css(); });
+  await step('dns', async () => { await dnsRecipe(); });
+  await step('platform', async () => { await platformContract(); });
+  await step('blocklist', async () => { await blocklistSieve(); });
+  await step('targets', async () => { await targetLists(); });
+  await step('last round', async () => { await lastRound(); await backupLadder(); await readmeIsTrue(); });
+  await step('only here', async () => { await onlyHere(); });
+  await step('which shell', async () => { await whichShell(); });
+  await step('batch sizing', async () => { await batchSizing(); });
+  await step('grouping', async () => { await grouping(); });
+  await step('cross-platform', async () => { await crossPlatformRender(); });
+  await step('internet', async () => { await networkPromises(); });
+  await step('packaging', async () => { await packagedBundle(); });
+  await step('safety', async () => { await safety(); await noHardcodedPaths(); });
+  if (!process.env.RECKON_CHECK_CHILD) await step('other platforms', asUnsupportedPlatform);
   console.log(failures ? `\n${failures} FAILURE(S)\n` : '\nall checks passed\n');
   process.exit(failures ? 1 : 0);
 })();
