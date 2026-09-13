@@ -86,17 +86,27 @@ function overview(c) {
     staying.length ? ` — plus ${p.stay.length - staying.length} more, each with its reason written below.` : '');
 
   const age = Math.round((Date.now() - c.at) / 60000);
+  const nothing = !out.length;
   root.append(el('div', { class: 'verdict' },
-    el('p', { class: 'headline' }, 'You can free ', el('em', {}, `${gb(p.totalGB)} GB`), '.'),
-    summary, stayLine,
+    nothing
+      ? el('p', { class: 'headline' }, 'Nothing here is worth deleting.')
+      : el('p', { class: 'headline' }, 'You can free ', el('em', {}, `${gb(p.totalGB)} GB`), '.'),
+    nothing
+      ? el('p', { class: 'summary' }, `Everything this scan measured is either in use or too small to matter. ${gb(kb2gb(c.volume.freeKB))} GB is already free. That is an answer, not a failure to find anything — a tidy machine is allowed to be tidy.`)
+      : summary,
+    nothing ? null : stayLine,
     el('div', { class: 'stamp' },
       el('span', {}, age < 1 ? 'measured just now' : `measured ${age} min ago`),
       el('span', {}, `the scan took ${Math.round(c.ms / 1000)}s`),
       p.uncertainKB > 0 ? el('span', {}, `${gb(kb2gb(p.uncertainKB))} GB depend on a condition`) : null,
       el('button', { class: 'copy', onclick: runScan }, 'scan again'))));
 
-  root.append(grid(at('c8', chartSteps(c)), at('c4', chartDiskDonut(c))));
-  root.append(grid(at('c4', chartKinds(c)), at('c8', chartColumns(c))));
+  // The disk donut is true on any machine: it is the whole volume, and "can be
+  // freed" is simply zero. The other two describe a list, so with no list they
+  // have nothing to say and are left out rather than drawn empty.
+  root.append(grid(at(nothing ? 'c12' : 'c8', nothing ? chartDiskDonut(c) : chartSteps(c)),
+    nothing ? null : at('c4', chartDiskDonut(c))));
+  if (!nothing) root.append(grid(at('c4', chartKinds(c)), at('c8', chartColumns(c))));
   root.append(grid(at('c12', chartDocker(c))));
 
   root.append(el('div', { class: 'section' },
@@ -192,6 +202,16 @@ function chartKinds(c) {
   const parts = shown.map((t, i) => ({ ...t, value: +t.value.toFixed(2), color: `var(--s${i + 1})`,
     note: t.folded ? t.folded.join(', ') : `${t.items} ${t.items === 1 ? 'item' : 'items'}` }));
   const biggest = parts[0];
+  // A machine with nothing to clean is a valid machine, and it is the first
+  // screen somebody with a tidy computer sees. Reading parts[0] of an empty
+  // list crashed the whole Overview tab on exactly that machine.
+  if (!biggest) {
+    return card({
+      title: 'What kind of leftovers these are',
+      sub: 'Nothing was found that is safe to remove, so there is nothing to break down.',
+      shape: el('p', { class: 'empty' }, 'no leftovers to classify'),
+    });
+  }
   return card({
     title: 'What kind of leftovers these are',
     sub: `${gb(biggest.value)} GB — ${((biggest.value / c.panel.totalGB) * 100).toFixed(0)}% of the total — is ${biggest.name.toLowerCase()}: it comes back on its own unless the habit changes.`,
@@ -309,16 +329,20 @@ function memory(d) {
 
   const m = d.memory, total = m.totalBytes / 1073741824;
   const base = new Map((d.opened?.groups || []).map((g) => [g.name, g.rssKB]));
-  // The first group is usually macOS itself, and you cannot quit the system.
-  // The headline names the biggest thing you can actually act on.
-  const yours = m.groups.find((g) => g.name !== 'macOS (system)') || m.groups[0];
-  const system = m.groups.find((g) => g.name === 'macOS (system)');
+  // The first group is usually the operating system itself, and you cannot quit
+  // the system. The headline names the biggest thing you can actually act on.
+  // Matching the label by shape rather than by the literal 'macOS (system)':
+  // on Windows the same group is 'Windows (system)', and the hardcoded string
+  // made the panel tell a Windows user to quit Windows.
+  const isSystem = (g) => /\(system\)$/.test(g.name);
+  const yours = m.groups.find((g) => !isSystem(g)) || m.groups[0];
+  const system = m.groups.find(isSystem);
 
   root.append(el('div', { class: 'verdict' },
     el('p', { class: 'headline' }, yours.name, ' is using ', el('em', {}, gb(kb2gb(yours.rssKB)) + ' GB'), '.'),
     el('p', { class: 'summary' },
       `That is ${yours.n} processes under one name — quitting the app quits all of them. `,
-      system ? `macOS takes another ${gb(kb2gb(system.rssKB))} GB across ${system.n} processes, and those are not yours to quit. ` : '',
+      system ? `${system.name.replace(/\s*\(system\)$/, '')} takes another ${gb(kb2gb(system.rssKB))} GB across ${system.n} processes, and those are not yours to quit. ` : '',
       m.note)));
 
   const g = m.vm;
@@ -390,12 +414,24 @@ function memory(d) {
     ));
   }
 
+  // A counter the platform could not read is null, and null is the seam saying
+  // "could not find out". Calling .toLocaleString() on it crashed the Memory
+  // tab on Windows, which publishes no compression counter at all. A tile with
+  // no number says so, and says which counter is missing — the absence is a
+  // fact about the machine, not a blank to be filled with a zero. A zero here
+  // would read as "this machine has never been under memory pressure".
+  const count = (n) => (n == null ? null : n.toLocaleString('en-US'));
+  const trips = g.swapins == null || g.swapouts == null ? null : count(g.swapins + g.swapouts);
   root.append(el('div', { class: 'section' }, el('h2', {}, 'Since this machine booted')));
   root.append(grid(
-    at('c4', tile('Trips to the disk', (g.swapins + g.swapouts).toLocaleString('en-US'), null,
-      'Each one is the machine stopping to fetch memory from the SSD.')),
-    at('c4', tile('Compressions', g.compressions.toLocaleString('en-US'), null,
-      'macOS squeezed memory this many times to avoid touching the disk.')),
+    at('c4', tile('Trips to the disk', trips ?? 'not measured', null,
+      trips
+        ? 'Each one is the machine stopping to fetch memory from the SSD.'
+        : 'This system does not publish a page-in/page-out counter, so nothing is claimed here.')),
+    at('c4', tile('Compressions', count(g.compressions) ?? 'not measured', null,
+      count(g.compressions)
+        ? 'The system squeezed memory this many times to avoid touching the disk.'
+        : 'This system compresses memory but publishes no counter for how often. A zero here would read as a machine that has never been under pressure, so the tile stays empty instead.')),
     at('c4', tile('Total RAM', total.toFixed(0), 'GB',
       'Soldered. On Apple Silicon it cannot be increased — only fitted into better.')),
   ));
@@ -1283,21 +1319,22 @@ function goTo(tab, noHash) {
   if (!noHash && location.hash.slice(1) !== tab) location.hash = tab;
   for (const b of document.querySelectorAll('#tabs button')) b.setAttribute('aria-selected', String(b.dataset.tab === tab));
   for (const s of document.querySelectorAll('main section')) s.hidden = s.id !== `tab-${tab}`;
-  if (tab === 'memory') refreshLight();
+  if (tab === 'memory') refreshLight().catch((e) => startupFailure('measuring memory (/api/light)', e));
   // Cheap on purpose: configuration plus five packets to machines this
   // computer already uses. The two paid readings live behind their buttons.
   if (tab === 'internet') loadNetwork(false);
   if (tab === 'dns' && !state.dns) {
     Promise.all([get('/api/dns'), get('/api/blocklist')]).then(([d, b]) => {
       state.dns = d; state.blocklist = b; dns(d);
-    });
+    }).catch((e) => startupFailure('reading the DNS configuration (/api/dns)', e));
   }
   measureSelf();
 }
 
 async function refreshLight() {
   state.light = await get('/api/light');
-  memory(state.light);
+  try { memory(state.light); }
+  catch (e) { startupFailure('drawing the Memory tab', e); throw e; }
   const m = state.light.memory;
   $('#machine-sub').textContent =
     `${(m.totalBytes / 1073741824).toFixed(0)} GB of RAM · ${m.swap ? gb(m.swap.usedMB / 1024) : '?'} GB in swap`;
@@ -1316,15 +1353,27 @@ addEventListener('hashchange', () => goTo(location.hash.slice(1), true));
 
    So: every call stands on its own, a failure is printed where the data would
    have been, and the rest of the panel still comes up. */
+const REPORTED = new Set();
 function startupFailure(where, e) {
+  const msg = (e && e.message) || String(e);
+  // One failure retried is still one failure. Three identical boxes stacked on
+  // a screen is the panel shouting the same sentence and burying the tabs that
+  // did come up.
+  const key = where + '|' + msg;
+  if (REPORTED.has(key)) return;
+  REPORTED.add(key);
+
   const box = document.querySelector('#tab-overview');
-  const text = `${where}\n${(e && e.message) || e}\n\nreckon ${navigator.userAgent.includes('Windows') ? 'on Windows' : ''}`.trim();
+  const text = `${where}\n${msg}\n\nreckon ${navigator.platform || navigator.userAgent}`.trim();
   box.prepend(el('div', { class: 'warn-box' },
     el('h3', {}, 'This part did not come up'),
     el('p', { style: 'color:var(--ink2);font-size:13.8px;margin:0 0 10px' },
       'The rest of the panel still works. Nothing was changed on the machine — reckon only reads.'),
     commandBlock(text, 'copy this and send it to whoever set the panel up')));
-  $('#machine-sub').textContent = 'could not read the machine';
+  // Only claim the machine could not be read when it actually could not. The
+  // footer was measuring RAM and scans correctly under a header that said the
+  // opposite.
+  if (!state.light) $('#machine-sub').textContent = 'could not read the machine';
 }
 
 (async function start() {
