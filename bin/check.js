@@ -742,7 +742,7 @@ async function onlyHere() {
   const r = (over) => ({ name: 'x', path: `${home}/www/x`, git: true, days: 1,
     lastCommit: '2026-01-01', hasRemote: true, onlyHere: 0, ...over });
   const run = async (repos) => {
-    const d = await checks.collect({ unmeasuredTargets: [], repos: { repos } });
+    const d = await withStubbedPlatform((checks) => checks.collect({ unmeasuredTargets: [], repos: { repos } }));
     return d.items.find((i) => i.id === 'only-here');
   };
 
@@ -840,6 +840,35 @@ function lastRound() {
 
 }
 
+/* checks.collect() reaches through lib/platform, which on a platform with no
+   implementation refuses rather than guesses. That is correct behaviour and it
+   is also why these tests took CI down on Linux the first time they ran there:
+   a test that only works on the machine it was written on tests nothing about
+   the ones it ships to. Both of these now run against a stubbed platform, on
+   any OS. */
+function withStubbedPlatform(fn) {
+  const platPath = require.resolve('../lib/platform');
+  const checksPath = require.resolve('../lib/checks');
+  const saved = [platPath, checksPath].map((k) => [k, require.cache[k]]);
+  require.cache[platPath] = { id: platPath, loaded: true, exports: {
+    id: 'fake', label: 'fake', supported: true,
+    backupStatus: async () => ({ tool: 'Time Machine', configured: false, latest: null, ageDays: null }),
+    volumeUsage: async () => ({ usedKB: 100, freeKB: 100 }),
+    memoryStats: async () => ({ totalBytes: 8e9, freeBytes: 4e9, wiredBytes: 1e9, activeBytes: 1e9, inactiveBytes: 1e9, compressedBytes: 0, pageSizeBytes: 4096, compressions: null, decompressions: null, swapins: null, swapouts: null }),
+    swapStats: async () => ({ totalMB: 0, usedMB: 0, freeMB: 0 }),
+    restartingContainers: async () => [],
+    unboundedLogContainers: async () => [],
+    failedServices: async () => [],
+  } };
+  delete require.cache[checksPath];
+  return Promise.resolve()
+    .then(() => fn(require('../lib/checks')))
+    .finally(() => {
+      for (const [k, v] of saved) { if (v) require.cache[k] = v; else delete require.cache[k]; }
+      delete require.cache[checksPath];
+    });
+}
+
 /* The README is a promise to somebody who has not run this yet, and a promise
    that has gone stale is worse than no promise. These are the three claims that
    were already false by the time anybody read them: a tab that exists and is
@@ -870,8 +899,7 @@ function readmeIsTrue() {
    shows four — passing for a reason that had nothing to do with the product.
    Test the output. */
 async function backupLadder() {
-  const checks = require('../lib/checks');
-  const d = await checks.collect({ unmeasuredTargets: [], repos: null });
+  const d = await withStubbedPlatform((checks) => checks.collect({ unmeasuredTargets: [], repos: null }));
   const b = d.items.find((i) => i.id === 'backup');
   if (!b) return fail('there is no backup row at all');
   if (!b.fix) {
@@ -891,8 +919,95 @@ async function backupLadder() {
   else fail('the ladder leads with something that costs money', first);
 }
 
+/* NOTHING MAY TOUCH THE SEAM AT MODULE SCOPE.
+ *
+ * lib/platform refuses rather than guesses on a platform it has no
+ * implementation for, and a required capability called at require time turns
+ * that refusal into "this file cannot be loaded at all". The panel then does
+ * not start, on a platform where most of it would have worked.
+ *
+ * This has now happened twice: once with hostsFilePath(), and once with a
+ * home-directory lookup in lib/checks.js that took CI down on Linux while
+ * passing on the machine it was written on. The second time is what makes it
+ * worth a test rather than a rule.
+ *
+ * A child process is spawned with process.platform redefined to a platform
+ * with no implementation, and every file under lib/ is required in it. Loading
+ * must succeed. Running is a different question and not this test's.
+ */
+function loadsOnAnyPlatform() {
+  const { spawnSync } = require('node:child_process');
+  const files = libFiles().filter((f) => !/^lib\/platform\/(darwin|win32)/.test(f));
+  const script = `
+    Object.defineProperty(process, 'platform', { value: 'linux', configurable: true });
+    const bad = [];
+    for (const f of ${JSON.stringify(files)}) {
+      try { require(require('node:path').join(${JSON.stringify(ROOT)}, f)); }
+      catch (e) { bad.push(f + ': ' + String((e && e.message) || e).split('\\n')[0]); }
+    }
+    console.log(JSON.stringify(bad));
+  `;
+  const r = spawnSync(process.execPath, ['-e', script], { encoding: 'utf8', timeout: 30000 });
+  if (r.status !== 0) return fail('could not test loading on an unsupported platform', (r.stderr || '').split('\n')[0]);
+  let bad;
+  try { bad = JSON.parse(String(r.stdout).trim().split('\n').pop()); }
+  catch { return fail('the unsupported-platform probe returned nothing readable', String(r.stdout).slice(0, 120)); }
+  if (!bad.length) ok(`all ${files.length} lib files load on a platform with no implementation`);
+  else fail(`${bad.length} file(s) run the seam at module scope`, bad.join(' | '));
+
+  // The binary's own entry points, too: `reckon report` on an unsupported
+  // platform must produce a report that says so, not a stack trace.
+  for (const entry of ['bin/report.js', 'server.js']) {
+    const one = spawnSync(process.execPath, ['-e', `
+      Object.defineProperty(process, 'platform', { value: 'linux', configurable: true });
+      try { require(${JSON.stringify(ROOT)} + '/${entry}'); console.log('OK'); }
+      catch (e) { console.log('THREW ' + String((e && e.message) || e).split('\\n')[0]); }
+    `], { encoding: 'utf8', timeout: 30000 });
+    const out = String(one.stdout || '').trim();
+    if (out.startsWith('OK')) ok(`${entry} loads on a platform with no implementation`);
+    else if (/THREW/.test(out)) fail(`${entry} throws at load on an unsupported platform`, out.slice(0, 110));
+    else ok(`${entry} did not load cleanly enough to judge (${out.slice(0, 40) || 'no output'})`);
+  }
+}
+
+/* RUN THE WHOLE SUITE AGAIN AS A PLATFORM WITH NO IMPLEMENTATION.
+ *
+ * This exists because of a specific failure: two commits were pushed that
+ * passed here and failed in CI, and nobody looked at CI until a third change
+ * was ready to tag. The tests were fine; the machine they ran on was the
+ * problem. macOS has an implementation, so anything that reaches through the
+ * seam works — and on Linux the same call refuses, correctly, and takes the
+ * suite down.
+ *
+ * So the suite runs itself a second time in a child process that declares
+ * itself Linux. A test that only passes on the machine it was written on says
+ * nothing about the machines it ships to, and now it cannot pretend otherwise
+ * without this failing first.
+ */
+function asUnsupportedPlatform() {
+  if (process.env.RECKON_CHECK_CHILD) return;   // this IS the child
+  const { spawnSync } = require('node:child_process');
+  const r = spawnSync(process.execPath, [
+    '-e',
+    `Object.defineProperty(process, 'platform', { value: 'linux', configurable: true });`
+    + ` process.argv[1] = ${JSON.stringify(path.join(ROOT, 'bin/check.js'))};`
+    + ` require(process.argv[1]);`,
+  ], { encoding: 'utf8', timeout: 180000, env: { ...process.env, RECKON_CHECK_CHILD: '1' } });
+
+  const out = String(r.stdout || '') + String(r.stderr || '');
+  if (r.status === 0 && /all checks passed/.test(out)) {
+    ok('the whole suite passes again on a platform with no implementation');
+    return;
+  }
+  const why = (out.match(/^ {2}FAIL {2}.*/m) || [])[0]
+    || (out.match(/^.*(Error|UnsupportedPlatform).*/m) || [])[0]
+    || `exit ${r.status}`;
+  fail('the suite fails on a platform with no implementation — CI will fail', why.trim().slice(0, 160));
+}
+
 (async () => {
   console.log('\nrequires');      requires();
+  console.log('\nany platform'); loadsOnAnyPlatform();
   console.log('\nshared scope');  sharedScope();
   console.log('\nselectors');     selectors();
   console.log('\ncontracts');     contracts();
@@ -910,6 +1025,7 @@ async function backupLadder() {
   console.log('\ninternet');   await networkPromises();
   console.log('\npackaging');  packagedBundle();
   console.log('\nsafety');        safety(); noHardcodedPaths();
+  if (!process.env.RECKON_CHECK_CHILD) { console.log('\nother platforms'); asUnsupportedPlatform(); }
   console.log(failures ? `\n${failures} FAILURE(S)\n` : '\nall checks passed\n');
   process.exit(failures ? 1 : 0);
 })();
