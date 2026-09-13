@@ -647,7 +647,32 @@ async function batchSizing() {
     if (!ids.includes('refused')) ok('and it is not counted in the total');
     else fail('an unmeasured folder reached the total');
 
+    // A CHUNK THAT DIES MUST NOT TAKE THE OTHERS WITH IT. One call for
+    // everything means one timeout for everything, and a single slow root —
+    // Windows.old, the recycle bin — would have made the panel report an
+    // empty machine.
+    const many = [];
+    for (let i = 0; i < 40; i++) {
+      many.push({ id: `t${i}`, path: `X:\\t${i}`, label: `T${i}`, verdict: 'disposable', lose: '', command: 'rm' });
+    }
+    // The 20th root is in the second chunk of 16 and poisons that whole call.
+    let poisoned = 0;
+    fake.knownCacheTargets = () => many.map((t) => ({ ...t }));
+    fake.dirSizesKB = async (paths) => {
+      if (paths.some((p) => /\bt20$/.test(p))) { poisoned++; return null; }
+      return Object.fromEntries(paths.map((p) => [p, FLOOR * 40]));
+    };
+    singleCalls = 0; existsCalls = 0;
+    delete require.cache[diskPath];
+    const r3 = await require('../lib/disk').targets();
+    if (poisoned === 1) ok('one chunk failed, as the test intended');
+    if (r3.list.length === 40) ok('a chunk that dies is re-measured one at a time — all 40 still counted');
+    else fail('a failed chunk lost its targets', `${r3.list.length} of 40`);
+    if (singleCalls === 16 && existsCalls === 16) ok('and ONLY that chunk pays the slow path');
+    else fail('the fallback was wider than the failed chunk', `${singleCalls} single calls`);
+
     // A platform without the capability must behave exactly as before.
+    fake.knownCacheTargets = () => targets.map((t) => ({ ...t }));
     delete fake.dirSizesKB;
     delete require.cache[diskPath];
     const disk2 = require('../lib/disk');
