@@ -525,6 +525,144 @@ function crossPlatformRender() {
   else fail("the front end hardcodes 'macOS (system)'", `${hard.length} occurrence(s) — a Windows machine labels it 'Windows (system)'`);
 }
 
+/* Grouping ten cache folders into one row is a readability win that can hide a
+   warning, which would make it a safety loss. These assert the merge keeps
+   every guard it inherited, and that a merged number still shows its parts. */
+function grouping() {
+  const { build, classify, KINDS } = require('../lib/decisions');
+
+  const t = (over) => ({ id: 'x', label: 'Chrome cache', kb: 1048576, path: 'C:\\a',
+    verdict: 'disposable', lose: 'nothing', command: 'Remove-Item -LiteralPath "C:\\a"',
+    group: 'browser-chrome', groupLabel: 'Chrome caches', groupLose: 'nothing at all', ...over });
+
+  const one = build({ docker: null, targets: [
+    t({ id: 'a', kb: 2097152, path: 'C:\\a', command: 'RM A' }),
+    t({ id: 'b', kb: 1048576, path: 'C:\\b', label: 'Chrome compiled-script cache', command: 'RM B' }),
+  ], repos: { repos: [] } });
+  const row = one.out.find((d) => /chrome/i.test(d.id));
+  if (one.out.length === 1) ok('two cache folders of one browser become one row');
+  else fail('grouping did not collapse the rows', `${one.out.length} rows`);
+  if (row && row.kb === 3145728) ok('the merged row carries the sum of its parts');
+  else fail('the merged size is wrong', row ? String(row.kb) : 'no row');
+  // Half the folders deleted while the row claims the size of all of them is
+  // the panel reporting work it did not describe.
+  if (row && /RM A/.test(row.command) && /RM B/.test(row.command)) ok('every member\'s command survives the merge');
+  else fail('the merge dropped a command', row ? row.command : '');
+  if (row && /2 folders/.test(row.proof)) ok('the merged proof names how many folders it added up');
+  else fail('the merged proof does not show its parts', row ? row.proof : '');
+
+  // THE ONE THAT MATTERS.
+  const risky = build({ docker: null, targets: [
+    t({ id: 'a', kb: 2097152, path: 'C:\\a' }),
+    t({ id: 'b', kb: 1048576, path: 'C:\\b', symlinks: [{ link: 'C:\\else' }] }),
+  ], repos: { repos: [] } });
+  const r2 = risky.out.find((d) => /chrome/i.test(d.id));
+  if (r2 && r2.warning && /symlink/i.test(r2.warning)) ok('a symlink on ONE member warns the whole group');
+  else fail('grouping swallowed a symlink warning', r2 ? String(r2.warning) : 'no row');
+  if (r2 && r2.confidence !== 'high') ok('a group is only as certain as its least certain member');
+  else fail('the merged row claims high confidence over a warned member');
+
+  const unproven = build({ docker: null, targets: [
+    t({ id: 'a', kb: 2097152, path: 'C:\\a', linksProven: true }),
+    t({ id: 'b', kb: 1048576, path: 'C:\\b', linksProven: false }),
+  ], repos: { repos: [] } });
+  const r3 = unproven.out.find((d) => /chrome/i.test(d.id));
+  if (r3 && /could not be completed/.test(r3.proof)) ok('an unproven link search on one member is stated for the group');
+  else fail('grouping turned an unproven all-clear into a proven one', r3 ? r3.proof : '');
+
+  // A target whose kind falls through to 'other' is a category the pie cannot
+  // name, and the pie is the chart that answers "what KIND of thing is this".
+  const platforms = [['darwin', require('../lib/platform/darwin')]];
+  try { platforms.push(['win32', require('../lib/platform/win32')]); } catch {}
+  for (const [name, mod] of platforms) {
+    const orphans = mod.knownCacheTargets().filter((x) => classify(x.id) === 'other');
+    if (!orphans.length) ok(`${name}: every target lands in a kind the pie can name`);
+    else fail(`${name}: ${orphans.length} target(s) fall through to 'other'`, orphans.map((x) => x.id).join(', '));
+  }
+  if (Object.keys(KINDS).length >= 10) ok(`${Object.keys(KINDS).length} kinds defined`);
+}
+
+/* The batch measurement path only ever executes on Windows, which is the one
+   platform this cannot be run on here. So it gets exercised against a fake
+   platform instead — otherwise the only test it ever gets is somebody else's
+   machine.
+
+   The distinction that matters: a root that is ABSENT must be skipped
+   silently, and a root that EXISTS BUT COULD NOT BE MEASURED must be reported
+   as unmeasured. Collapsing those two is how a disk full of junk reports
+   nothing and a person believes it. */
+async function batchSizing() {
+  const path = require('node:path');
+  const platPath = require.resolve('../lib/platform');
+  const diskPath = require.resolve('../lib/disk');
+  const saved = [platPath, diskPath].map((k) => [k, require.cache[k]]);
+
+  const FLOOR = 51200;
+  const targets = [
+    { id: 'big', path: 'X:\\big', label: 'Big', verdict: 'disposable', lose: '', command: 'rm' },
+    { id: 'small', path: 'X:\\small', label: 'Small', verdict: 'disposable', lose: '', command: 'rm' },
+    { id: 'absent', path: 'X:\\absent', label: 'Absent', verdict: 'disposable', lose: '', command: 'rm' },
+    { id: 'refused', path: 'X:\\refused', label: 'Refused', verdict: 'disposable', lose: '', command: 'rm' },
+  ];
+  let batchCalls = 0, singleCalls = 0, existsCalls = 0;
+  const fake = {
+    id: 'fake', label: 'fake', supported: true,
+    knownCacheTargets: () => targets.map((t) => ({ ...t })),
+    pathExists: async () => { existsCalls++; return true; },
+    dirSizeKB: async () => { singleCalls++; return FLOOR * 2; },
+    realSizeKB: async () => FLOOR * 2,
+    dirSizesKB: async (paths) => {
+      batchCalls++;
+      const out = {};
+      for (const p of paths) {
+        if (/absent/.test(p)) continue;              // not there at all
+        if (/refused/.test(p)) { out[p] = null; continue; }  // there, unreadable
+        out[p] = /big/.test(p) ? FLOOR * 40 : 1024;
+      }
+      return out;
+    },
+  };
+  require.cache[platPath] = { id: platPath, loaded: true, exports: fake };
+  delete require.cache[diskPath];
+
+  try {
+    const disk = require('../lib/disk');
+    const { list, unmeasured } = await disk.targets();
+
+    if (batchCalls === 1) ok('every target is measured in ONE call, not one call each');
+    else fail('the batch path did not run', `${batchCalls} batch call(s), ${singleCalls} single`);
+    if (existsCalls === 0) ok('the batch removes the separate existence check too');
+    else fail('it still tests each path separately', `${existsCalls} calls`);
+
+    const ids = list.map((x) => x.id);
+    if (ids.includes('big') && !ids.includes('small')) ok('over the floor is kept, under it is dropped');
+    else fail('the floor is not applied through the batch', ids.join(', '));
+    if (!ids.includes('absent')) ok('a root that is not there is skipped silently');
+    else fail('an absent root became a row');
+    // THE ONE THAT MATTERS: unreadable is not empty.
+    if (unmeasured.some((u) => u.id === 'refused')) ok('a root that exists but could not be read is reported as unmeasured');
+    else fail('an unreadable folder was silently treated as empty', JSON.stringify(unmeasured));
+    if (!ids.includes('refused')) ok('and it is not counted in the total');
+    else fail('an unmeasured folder reached the total');
+
+    // A platform without the capability must behave exactly as before.
+    delete fake.dirSizesKB;
+    delete require.cache[diskPath];
+    const disk2 = require('../lib/disk');
+    singleCalls = 0; existsCalls = 0;
+    const r2 = await disk2.targets();
+    if (singleCalls === 4 && existsCalls === 4) ok('a platform without the capability falls back to one at a time');
+    else fail('the fallback path changed', `${singleCalls} sizes, ${existsCalls} exists`);
+    if (r2.list.length === 4) ok('and still measures every target');
+    else fail('the fallback lost targets', String(r2.list.length));
+  } catch (e) {
+    fail('lib/disk.js threw while measuring in batch', String(e && e.message));
+  } finally {
+    for (const [k, v] of saved) { if (v) require.cache[k] = v; else delete require.cache[k]; }
+    delete require.cache[diskPath];
+  }
+}
+
 (async () => {
   console.log('\nrequires');      requires();
   console.log('\nshared scope');  sharedScope();
@@ -535,6 +673,8 @@ function crossPlatformRender() {
   console.log('\nplatform');      platformContract();
   console.log('\nblocklist');     blocklistSieve();
   console.log('\ntargets');    targetLists();
+  console.log('\nbatch sizing'); await batchSizing();
+  console.log('\ngrouping');   grouping();
   console.log('\ncross-platform'); crossPlatformRender();
   console.log('\ninternet');   await networkPromises();
   console.log('\npackaging');  packagedBundle();
