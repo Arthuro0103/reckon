@@ -1386,7 +1386,16 @@ addEventListener('hashchange', () => goTo(location.hash.slice(1), true));
    So: every call stands on its own, a failure is printed where the data would
    have been, and the rest of the panel still comes up. */
 const REPORTED = new Set();
+// THE REPORTER MUST NOT BE ABLE TO FAIL. It is the last thing standing between
+// a problem and a blank page, so every line in it is either guarded or cannot
+// throw. An earlier version read navigator.platform directly and died where
+// that was not defined — which would have put the screen back exactly where
+// this function exists to stop it being.
 function startupFailure(where, e) {
+  try { report(where, e); } catch { /* nothing left to try, and nothing worth throwing */ }
+}
+
+function report(where, e) {
   const msg = (e && e.message) || String(e);
   // One failure retried is still one failure. Three identical boxes stacked on
   // a screen is the panel shouting the same sentence and burying the tabs that
@@ -1396,7 +1405,9 @@ function startupFailure(where, e) {
   REPORTED.add(key);
 
   const box = document.querySelector('#tab-overview');
-  const text = `${where}\n${msg}\n\nreckon ${navigator.platform || navigator.userAgent}`.trim();
+  let where2 = '';
+  try { where2 = (typeof navigator !== 'undefined' && (navigator.platform || navigator.userAgent)) || ''; } catch {}
+  const text = `${where}\n${msg}${where2 ? `\n\nreckon on ${where2}` : ''}`.trim();
   box.prepend(el('div', { class: 'warn-box' },
     el('h3', {}, 'This part did not come up'),
     el('p', { style: 'color:var(--ink2);font-size:13.8px;margin:0 0 10px' },

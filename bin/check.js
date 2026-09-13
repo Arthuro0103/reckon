@@ -60,6 +60,7 @@ function sharedScope() {
     document: { createElement: no, createElementNS: no, createTextNode: no, body: no(),
       querySelector: () => no(), querySelectorAll: () => [], addEventListener() {} },
     addEventListener() {}, innerWidth: 1200, location: { hash: '' },
+    navigator: { platform: 'test', userAgent: 'test' },
     fetch: () => Promise.resolve({ ok: true, json: () => ({ hasCache: false }) }) };
   ctx.window = ctx; ctx.globalThis = ctx;
   vm.createContext(ctx);
@@ -728,6 +729,55 @@ function whichShell() {
   else fail('the screen never mentions the wrong shell');
 }
 
+/* The row that says how much committed work has no copy off this disk. The
+   guard that matters: git failing to answer must read as "could not tell", not
+   as "nothing is at risk". A clean screen for the wrong reason is the failure
+   this whole panel is built against. */
+async function onlyHere() {
+  const checks = require('../lib/checks');
+  // Under the real home directory, because that is where repositories actually
+  // are and it is the only shape that tests the shortener. A made-up path
+  // outside it has no username to hide and would pass for the wrong reason.
+  const home = process.env.HOME || process.env.USERPROFILE || '';
+  const r = (over) => ({ name: 'x', path: `${home}/www/x`, git: true, days: 1,
+    lastCommit: '2026-01-01', hasRemote: true, onlyHere: 0, ...over });
+  const run = async (repos) => {
+    const d = await checks.collect({ unmeasuredTargets: [], repos: { repos } });
+    return d.items.find((i) => i.id === 'only-here');
+  };
+
+  const none = await run([r({ name: 'a' }), r({ name: 'b' })]);
+  if (none && !none.serious && /exists somewhere else/i.test(none.title)) ok('all pushed reads as safe, and still gets a row');
+  else fail('a fully pushed machine got the wrong row', none ? none.title : 'no row');
+
+  // THE ONE THAT MATTERS.
+  const blind = await run([r({ name: 'a', onlyHere: null }), r({ name: 'b', onlyHere: null })]);
+  if (blind && /Could not tell/i.test(blind.title)) ok('git failing to answer reads as "could not tell", never as "nothing at risk"');
+  else fail('an unanswerable repo was reported as safe', blind ? blind.title : 'no row');
+
+  const risky = await run([
+    r({ name: 'sim', onlyHere: 261, hasRemote: false, days: 118 }),
+    r({ name: 'ahead', onlyHere: 5, hasRemote: true, days: 0 }),
+  ]);
+  if (risky && /266 commits in 2 repositories/.test(risky.title)) ok('the count is the sum across repositories');
+  else fail('the count is wrong', risky ? risky.title : 'no row');
+  if (risky && risky.serious) ok('real history with no copy is serious');
+  else fail('266 unbacked commits were not marked serious');
+  // A repository with no remote loses EVERYTHING, not just what is unpushed.
+  // Blurring the two would understate the one that matters more.
+  if (risky && /no remote at all/.test(risky.found)) ok('a repo with no remote is named as such, not as merely behind');
+  else fail('the row does not distinguish "no remote" from "behind"');
+  if (risky && /bundle create/.test(risky.fix) && /git push/.test(risky.fix)) ok('the fix covers both cases, each with its own command');
+  else fail('the fix does not cover both cases', risky ? risky.fix : '');
+  // Commands reach the screen; a username must not.
+  if (risky && !risky.fix.includes(home) && /~\/www\/x/.test(risky.fix)) ok('the commands wear ~ and carry no username');
+  else fail('a home directory leaked into the fix', risky ? risky.fix : '');
+
+  const small = await run([r({ name: 'a', onlyHere: 1, hasRemote: true })]);
+  if (small && !small.serious) ok('a single unpushed commit is a nudge, not an alarm');
+  else fail('one commit was escalated to serious');
+}
+
 (async () => {
   console.log('\nrequires');      requires();
   console.log('\nshared scope');  sharedScope();
@@ -738,6 +788,7 @@ function whichShell() {
   console.log('\nplatform');      platformContract();
   console.log('\nblocklist');     blocklistSieve();
   console.log('\ntargets');    targetLists();
+  console.log('\nonly here');  await onlyHere();
   console.log('\nwhich shell'); whichShell();
   console.log('\nbatch sizing'); await batchSizing();
   console.log('\ngrouping');   grouping();
