@@ -18,6 +18,7 @@ const MAX_POINTS = 120;
 const OPENED = { at: Date.now(), groups: null };
 
 let running = null;   // one deep scan at a time
+let progress = null;  // what that scan is doing right now, for the screen to read
 // A speed test saturates the link. Two at once spend the data twice AND corrupt
 // each other's numbers, so the second click is refused rather than queued.
 let speedRunning = false;
@@ -79,13 +80,27 @@ const server = http.createServer(async (req, res) => {
 
     if (route === '/api/cache') {
       const c = scan.readCache();
-      return json(res, c ? { hasCache: true, ...c } : { hasCache: false });
+      if (!c) return json(res, { hasCache: false });
+      // The difference against the scan before this one, when there is one.
+      return json(res, { hasCache: true, ...c, changed: scan.changed(c, scan.readPrevious()) });
     }
 
     if (route === '/api/deep') {
       if (running) return json(res, { alreadyRunning: true }, 409);
-      running = scan.deep();
-      try { return json(res, await running); } finally { running = null; }
+      // The steps the scan is already computing, kept where the screen can ask
+      // for them. Two minutes of a frozen page is the moment a person decides
+      // the tool is broken and closes it — and this scan genuinely takes that
+      // long, so the honest fix is to show what it is doing, not to hurry it.
+      progress = { step: 'starting', at: Date.now(), n: 0 };
+      running = scan.deep((step) => { progress = { step, at: Date.now(), n: progress.n + 1 }; });
+      try { return json(res, await running); } finally { running = null; progress = null; }
+    }
+
+    // Only meaningful while a scan the user started is running, and it stops
+    // being answered the moment that scan ends. This is not the panel polling
+    // itself: nothing asks unless somebody pressed the button.
+    if (route === '/api/deep/progress') {
+      return json(res, progress ? { running: true, ...progress } : { running: false });
     }
 
     // The Internet tab. collect() only ever touches machines this computer was
