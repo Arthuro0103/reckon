@@ -778,6 +778,119 @@ async function onlyHere() {
   else fail('one commit was escalated to serious');
 }
 
+/* The three things this round added, and the line each one must not cross. */
+function lastRound() {
+  const scan = require('../lib/scan');
+  const GB = 1048576;   // in KB
+
+  // --- what changed between two scans ------------------------------------
+  const mk = (at, freeKB, out) => ({ at, volume: { freeKB, usedKB: 100 * GB }, panel: { out } });
+  const prev = mk(1000, 100 * GB, [
+    { id: 'a', title: 'Cache A', kb: 10 * GB }, { id: 'b', title: 'Cache B', kb: 2 * GB },
+    { id: 'zero', title: 'Empty', kb: 0 },
+  ]);
+  const now = mk(1000 + 86400000 * 2, 112 * GB, [
+    { id: 'b', title: 'Cache B', kb: 2 * GB }, { id: 'c', title: 'Cache C', kb: 1 * GB },
+  ]);
+  const ch = scan.changed(now, prev);
+
+  if (ch && ch.freedKB === 12 * GB) ok('free space is the difference between two readings of the volume');
+  else fail('the freed figure is wrong', ch ? String(ch.freedKB) : 'no result');
+  if (ch && ch.gone.length === 1 && ch.gone[0].id === 'a') ok('an item that was on the list and is not any more counts as gone');
+  else fail('gone is wrong', ch ? JSON.stringify(ch.gone) : '');
+  // An item measured at zero was never on the list; calling it "gone" would
+  // inflate the count with things nobody did anything about.
+  if (ch && !ch.gone.some((g) => g.id === 'zero')) ok('an item that measured zero is not counted as gone');
+  else fail('a zero-size item was reported as removed');
+  if (ch && ch.appeared.length === 1 && ch.appeared[0].id === 'c') ok('something new since then is named too');
+  else fail('appeared is wrong', ch ? JSON.stringify(ch.appeared) : '');
+  if (ch && ch.goneKB === 10 * GB) ok('the gone total uses the size measured when it was last seen');
+  else fail('goneKB is wrong', ch ? String(ch.goneKB) : '');
+  if (ch && ch.days === 2) ok('the gap is stated in days');
+  else fail('the gap is wrong', ch ? String(ch.days) : '');
+  if (scan.changed(now, null) === null) ok('no previous scan means no comparison, not a comparison against zero');
+  else fail('a missing previous scan produced a difference anyway');
+
+  // A shrinking disk is as real a reading as a growing one and must not be
+  // hidden: somebody whose free space fell needs to see that.
+  const worse = scan.changed(mk(2000, 90 * GB, []), prev);
+  if (worse && worse.freedKB === -10 * GB) ok('free space going DOWN is reported, not suppressed');
+  else fail('a negative change was not reported', worse ? String(worse.freedKB) : '');
+
+  // THE LINE: the screen states two measurements and does not claim to be the
+  // cause. Free space moves for reasons that have nothing to do with this tool.
+  const app = read('web/app.js');
+  if (/not a claim about what caused/.test(app)) ok('the screen says the difference is not attributed to the panel');
+  else fail('the panel takes credit for a change it cannot prove it caused');
+
+  // --- progress while scanning -------------------------------------------
+  const srv = read('server.js');
+  if (/'\/api\/deep\/progress'/.test(srv)) ok('the scan reports what it is doing');
+  else fail('there is no way for the screen to read the scan\'s progress');
+  if (/progress = null/.test(srv)) ok('and stops reporting the moment the scan ends');
+  else fail('progress is never cleared, so the screen could poll forever');
+  if (/Math\.min\(94/.test(app)) ok('the progress bar cannot reach the end before the answer does');
+  else fail('the progress bar can claim to be finished while the scan is not');
+  // Pressing a button and having nothing happen is the failure mode this panel
+  // exists to eliminate. A scan already in flight is followed, not ignored.
+  if (/alreadyRunning[\s\S]{0,400}already running/.test(app)) ok('a scan already in flight is followed, and the screen says so');
+  else fail('a second scan request silently restores the old screen');
+  if (/const secs = Math\.max/.test(app)) ok('the step shows how long it has been running, so a slow step does not read as frozen');
+  else fail('a step that holds for a minute looks identical to a hang');
+
+}
+
+/* The README is a promise to somebody who has not run this yet, and a promise
+   that has gone stale is worse than no promise. These are the three claims that
+   were already false by the time anybody read them: a tab that exists and is
+   not listed, "it does not follow up" after follow-up was built, and "macOS
+   only" after Windows shipped. Each is now something a test can notice. */
+function readmeIsTrue() {
+  const readme = read('README.md');
+  const html = read('web/index.html');
+
+  const tabs = [...html.matchAll(/data-tab="([a-z]+)"/g)].map((m) => m[1]);
+  const missing = tabs.filter((t) => !new RegExp(`\\*\\*${t}\\*\\*`, 'i').test(readme));
+  if (!missing.length) ok(`all ${tabs.length} tabs are listed in the README`);
+  else fail('the README does not list every tab', missing.join(', '));
+
+  // A platform with an implementation must not be described as unsupported.
+  const hasWin = fs.existsSync(path.join(ROOT, 'lib/platform/win32.js'));
+  if (!hasWin) ok('no win32 implementation, so no claim to check');
+  else if (/macOS only/i.test(readme)) fail('win32.js exists and the README still says "macOS only"');
+  else ok('the README does not call this macOS-only while win32.js exists');
+
+  if (/does not follow up/i.test(readme) && /scan-previous/.test(read('lib/scan.js'))) {
+    fail('the README says it does not follow up, and lib/scan.js keeps a previous scan');
+  } else ok('the README and the code agree about whether it follows up');
+}
+
+/* The backup row, read the way the screen reads it. An earlier version of this
+   test regexed the source file instead and counted three rungs where the screen
+   shows four — passing for a reason that had nothing to do with the product.
+   Test the output. */
+async function backupLadder() {
+  const checks = require('../lib/checks');
+  const d = await checks.collect({ unmeasuredTargets: [], repos: null });
+  const b = d.items.find((i) => i.id === 'backup');
+  if (!b) return fail('there is no backup row at all');
+  if (!b.fix) {
+    // A configured, current backup legitimately has no fix.
+    if (/current|configured/i.test(b.title)) return ok('a machine with a working backup needs no fix, and gets none');
+    return fail('the backup row has no fix', b.title);
+  }
+  const rungs = (b.fix.match(/^# \d\./gm) || []).length;
+  if (rungs >= 3) ok(`the backup row offers ${rungs} things to do, not one purchase`);
+  else fail('the backup row dead-ends on buying a disk', `${rungs} rung(s) in the text shown`);
+  if (/is NOT\b|not a backup/i.test(b.fix)) ok('and says which rungs are not really a backup');
+  else fail('the ladder presents a sync folder as a backup');
+  // The cheapest thing must come first: somebody who stops reading after one
+  // line should have read the one they can do today.
+  const first = (b.fix.match(/^# 1\..*/m) || [''])[0];
+  if (/free|now/i.test(first)) ok('and the first rung is one you can do today, for nothing');
+  else fail('the ladder leads with something that costs money', first);
+}
+
 (async () => {
   console.log('\nrequires');      requires();
   console.log('\nshared scope');  sharedScope();
@@ -788,6 +901,7 @@ async function onlyHere() {
   console.log('\nplatform');      platformContract();
   console.log('\nblocklist');     blocklistSieve();
   console.log('\ntargets');    targetLists();
+  console.log('\nlast round'); lastRound(); await backupLadder(); readmeIsTrue();
   console.log('\nonly here');  await onlyHere();
   console.log('\nwhich shell'); whichShell();
   console.log('\nbatch sizing'); await batchSizing();

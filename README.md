@@ -103,6 +103,7 @@ never end up in a commit.
 | **Overview** | the decisions, ordered by how much they free. The screen that opens |
 | **Memory** | what is using RAM now, grouped by app, and how much each changed since you opened |
 | **Disk** | where the space went, folder by folder, with a verdict: `disposable` · `yours` · `cannot judge` |
+| **Internet** | which link is carrying traffic, the round trip to your router and to the resolvers you already use, and — behind their own buttons, with the cost stated first — throughput and the Wi-Fi radio |
 | **Checks** | what is broken and has a fix |
 | **DNS** | two halves: a blocklist you build, and the resolver your machine asks |
 
@@ -224,8 +225,10 @@ surface. Nothing else needs to change.
 
 - **It deletes nothing, and that is permanent.** There is no execute button and there will not
   be one.
-- **It does not follow up.** After you run a command it has no idea you ran it. Ask for a new
-  scan to see the number move.
+- **It follows up by comparison, not by watching.** It keeps exactly one scan back. Scan again
+  and the Overview states free space then and now, and names the items that were on the list and
+  are not any more. It does NOT claim to have caused the difference: free space moves because a
+  download finished or a snapshot expired too, and the screen says so rather than taking credit.
 - **It only knows the folders somebody taught it.** The Disk tab has a fixed list of known
   targets (npm, pip, uv, Homebrew, HuggingFace, Playwright, Xcode, Gradle, Cargo, Go…). A 30 GB
   folder outside that list shows up in the "top of your home folder" table with no verdict, and
@@ -245,9 +248,11 @@ surface. Nothing else needs to change.
 - **No authentication** — and none is needed: the server refuses any connection that is not
   loopback, and listens on `127.0.0.1` only. Do not expose it. This panel can see the whole
   machine, and that is a map of it.
-- **macOS only.** It leans on `vm_stat`, `tmutil`, `networksetup`, `scutil` and Docker
-  Desktop's VM layout. Tested on Apple Silicon running macOS 26; Intel should work and has not
-  been verified.
+- **macOS and Windows. Linux is not written yet.** Every reading goes through `lib/platform`,
+  which has 30 required capabilities and a handful of optional ones; `darwin.js` and `win32.js`
+  implement all 30, and `lib/platform/linux.js` does not exist — the panel says so by name
+  rather than half-working. Tested on Apple Silicon running macOS 26. The Windows build is
+  tested on Windows 11; Intel Macs should work and have not been verified.
 
 ## Contributing
 

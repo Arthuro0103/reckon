@@ -133,6 +133,47 @@ function overview(c) {
       p.uncertainKB > 0 ? el('span', {}, `${gb(kb2gb(p.uncertainKB))} GB depend on a condition`) : null,
       el('button', { class: 'copy', onclick: runScan }, 'scan again'))));
 
+  // WHAT MOVED SINCE LAST TIME. The closing question this panel was built to
+  // answer is not "how much is here" — it is "did doing that actually free
+  // anything". One reading cannot answer it; two can.
+  //
+  // The wording is careful on purpose. Free space is stated as two
+  // measurements, not as a claim about who caused the change: a download
+  // finishing, a snapshot expiring or an app updating itself all move that
+  // number, and a panel that took credit for them would be doing the thing it
+  // exists to stop. What it DOES attribute is the list — an item that was here
+  // and is gone was acted on, and its size is the one measured when it was
+  // last seen.
+  const ch = c.changed;
+  if (ch && (ch.gone.length || Math.abs(ch.freedKB) > 102400)) {
+    const when = ch.days >= 1 ? `${ch.days} ${ch.days === 1 ? 'day' : 'days'} ago`
+      : ch.hours >= 1 ? `${ch.hours} ${ch.hours === 1 ? 'hour' : 'hours'} ago` : 'earlier today';
+    const up = ch.freedKB > 0;
+    const box = el('div', { class: 'sinceScan' });
+    box.append(el('p', { class: 'head' },
+      ch.gone.length
+        ? `${ch.gone.length} ${ch.gone.length === 1 ? 'item is' : 'items are'} gone since the scan ${when}`
+        : `Since the scan ${when}`));
+    box.append(el('p', { class: 'body' },
+      `Free space read ${gb(kb2gb(ch.freeBeforeKB))} GB then and ${gb(kb2gb(ch.freeNowKB))} GB now — `,
+      el('b', {}, `${up ? '+' : ''}${gb(kb2gb(ch.freedKB))} GB`),
+      '. Those are two measurements of the volume, not a claim about what caused the difference: a finished download, an expired snapshot or an app updating itself all move that number too.'));
+    if (ch.gone.length) {
+      box.append(el('p', { class: 'body' },
+        el('b', {}, 'Gone from the list: '),
+        ch.gone.slice(0, 5).map((g) => `${g.title} (${gb(kb2gb(g.kb))} GB)`).join(', '),
+        ch.gone.length > 5 ? `, and ${ch.gone.length - 5} more` : '',
+        `. That is ${gb(kb2gb(ch.goneKB))} GB the previous scan measured and this one cannot find — the part of the change this panel can actually account for.`));
+    }
+    if (ch.appeared.length) {
+      box.append(el('p', { class: 'body' },
+        el('b', {}, 'New since then: '),
+        ch.appeared.slice(0, 4).map((g) => `${g.title} (${gb(kb2gb(g.kb))} GB)`).join(', '),
+        ch.appeared.length > 4 ? `, and ${ch.appeared.length - 4} more` : '', '.'));
+    }
+    root.append(box);
+  }
+
   // The disk donut is true on any machine: it is the whole volume, and "can be
   // freed" is simply zero. The other two describe a list, so with no list they
   // have nothing to say and are left out rather than drawn empty.
@@ -334,22 +375,94 @@ function stayCard(f) {
 }
 
 /* ------------------------------------------------------------------ scan */
+/* The scan takes about two minutes, and for most of that the page used to show
+   one frozen sentence. Two minutes of nothing is where somebody decides the
+   tool has hung and closes it — which is what happened to the first person who
+   ran this on Windows. The server was already computing the steps; now they
+   reach the screen.
+
+   The asking stops the moment the scan does, and nothing asks unless the button
+   was pressed. "Collects on demand" survives intact. */
+const SCAN_STEPS = 8;
 async function runScan() {
   const root = $(`#tab-${state.tab}`);
   const before = root.innerHTML;
   root.textContent = '';
+  const line = el('p', { class: 'summary loading' }, 'starting');
+  const bar = el('div', { class: 'scanbar' }, el('i', { style: 'width:2%' }));
+  const done = el('div', { class: 'stamp' },
+    el('span', {}, 'about two minutes · nothing is deleted, nothing leaves this machine'));
   root.append(el('div', { class: 'verdict' },
-    el('p', { class: 'headline' }, 'Looking.'),
-    el('p', { class: 'summary loading' }, 'reading the disk folder by folder, opening the Docker VM, running git in every repository'),
-    el('div', { class: 'stamp' }, el('span', {}, 'this takes about two minutes and runs once'))));
+    el('p', { class: 'headline' }, 'Looking.'), line, bar, done));
+
+  let watching = true;
+  (async function watch() {
+    // The first poll fires before the server has even received the request that
+    // starts the scan, so the honest answer to it is "nothing is running". An
+    // earlier version treated that as "the scan finished" and stopped after one
+    // turn — the bar then sat at 'starting' for the entire two minutes, which
+    // is worse than the frozen sentence it replaced.
+    //
+    // So: `running: false` only ends the watch once the scan has been SEEN
+    // running. Before that it means "not yet", and there is a ceiling on how
+    // long "not yet" is allowed to last so a request that never arrives does
+    // not leave a loop turning forever.
+    let started = false;
+    let waited = 0;
+    while (watching) {
+      try {
+        const p = await get('/api/deep/progress');
+        if (p.running) started = true;
+        else if (started) break;
+        else if ((waited += 700) > 20000) break;
+        if (!p.running) { await new Promise((r) => setTimeout(r, 700)); continue; }
+        // The seconds matter as much as the name. The last step — walking the
+        // top of the home folder — can hold for a minute on a full disk, and a
+        // step name that does not change for a minute reads as frozen no matter
+        // how accurate it is. A number that keeps moving proves it is alive.
+        const secs = Math.max(0, Math.round((Date.now() - p.at) / 1000));
+        line.textContent = secs >= 4 ? `${p.step} · ${secs}s` : p.step;
+        // The step count is what the scan actually reports, so the bar can
+        // only ever be an approximation — it is capped below 100 so it never
+        // claims to be finished before the answer is here.
+        const pct = Math.min(94, Math.round((p.n / SCAN_STEPS) * 100));
+        bar.firstChild.style.width = Math.max(2, pct) + '%';
+      } catch { break; }
+      await new Promise((r) => setTimeout(r, 700));
+    }
+  })();
+
   try {
     const d = await get('/api/deep');
-    if (d.alreadyRunning) { root.innerHTML = before; return; }
+
+    // A scan was ALREADY running — started from another tab, from the command
+    // line, or by a second click. The old behaviour put the previous screen
+    // back and said nothing: you pressed a button and the panel appeared to
+    // ignore you, which is the same silent no-op this whole panel is built
+    // against. Follow the scan that IS running instead. It is the same scan
+    // you asked for.
+    if (d.alreadyRunning) {
+      done.textContent = '';
+      done.append(el('span', {}, 'a scan was already running — following that one'));
+      while (watching) {
+        await new Promise((r) => setTimeout(r, 700));
+        let p;
+        try { p = await get('/api/deep/progress'); } catch { break; }
+        if (!p.running) break;
+      }
+      watching = false;
+      state.cache = await get('/api/cache');
+      render();
+      return;
+    }
+
     state.cache = { hasCache: true, ...d };
     render();
   } catch (e) {
     root.textContent = '';
     root.append(el('p', { class: 'empty' }, 'the scan failed: ' + e.message));
+  } finally {
+    watching = false;
   }
 }
 

@@ -227,6 +227,23 @@ button.copy:hover { border-color: var(--cyan); color: var(--ink); }
 .command-bar .note { font-size: 12px; color: var(--ink3); }
 
 /* ------------------------------------------------------------------- DNS */
+/* What moved since the last scan. Sits under the verdict, above the charts:
+   it is context for the number at the top, not a decision of its own. */
+.sinceScan {
+  border: 1px solid var(--line); border-left: 2px solid var(--s1);
+  border-radius: 10px; padding: 14px 19px; margin: 0 0 18px; background: var(--bg2);
+}
+.sinceScan .head { margin: 0 0 7px; font-size: 14.5px; font-weight: 600; color: var(--ink); }
+.sinceScan .body { margin: 0 0 6px; font-size: 13.6px; color: var(--ink2); max-width: 86ch; line-height: 1.55; }
+.sinceScan .body:last-child { margin-bottom: 0; }
+.sinceScan b { color: var(--ink); font-weight: 600; }
+
+/* The scan's progress. Capped below full on purpose: it is a count of steps
+   reported, not a prediction, and a bar that reaches the end before the answer
+   does is a bar that lies. */
+.scanbar { height: 4px; border-radius: 2px; background: var(--bg3); margin: 14px 0 4px; max-width: 460px; overflow: hidden; }
+.scanbar i { display: block; height: 100%; background: var(--s1); transition: width .5s ease; }
+
 .warn-box {
   border: 1px solid var(--edge); border-radius: 10px;
   padding: 15px 19px; margin-bottom: 15px; background: #e0a04a0d;
