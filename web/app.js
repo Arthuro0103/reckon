@@ -28,8 +28,8 @@ const get = async (u) => {
   return r.json();
 };
 
-const state = { cache: null, light: null, dns: null, blocklist: null, network: null, tab: 'overview' };
-const TABS = ['overview', 'memory', 'disk', 'internet', 'checks', 'dns'];
+const state = { cache: null, light: null, dns: null, blocklist: null, network: null, pressure: null, tab: 'overview' };
+const TABS = ['overview', 'memory', 'pressure', 'disk', 'internet', 'checks', 'dns'];
 
 const grid = (...f) => el('div', { class: 'grid' }, ...f.filter(Boolean));
 const at = (cls, node) => { node.classList.add(cls); return node; };
@@ -1430,6 +1430,92 @@ async function measureSelf() {
   } catch {}
 }
 
+/* --------------------------------------------------------------- pressure */
+/* The tab that answers a question no other tab here can: not "what is big?"
+   but "what is stealing the machine right now?".
+
+   The two are not the same question and the difference is the reason this tab
+   exists. The afternoon it was written for had 365 orphaned processes holding
+   171 MB between them — invisible to every byte-ranked screen in this panel —
+   and the machine was running at a twentieth of its own speed. */
+function pressure(d) {
+  const root = $('#tab-pressure');
+  if (!root) return;
+  root.textContent = '';
+  if (!d) {
+    root.append(el('p', { class: 'empty' }, 'measuring…'));
+    return;
+  }
+
+  const f = d.probe.factor;
+  const swapPct = d.swap ? Math.round(d.swap.share * 100) : null;
+
+  root.append(el('div', { class: 'verdict' },
+    el('p', { class: 'headline' },
+      d.probe.fresh
+        ? 'First reading. This becomes the baseline every later one is measured against.'
+        : f >= 2
+          ? `This machine is running at ${f}x the time it takes at its best.`
+          : 'This machine is running at its own normal speed.'),
+    el('p', {},
+      `A fixed piece of arithmetic took ${d.probe.nowMs} ms just now. `
+      + (d.probe.fresh ? 'Nothing to compare it against yet — open this tab again later.'
+        : `The fastest this machine has ever done it is ${d.probe.bestMs} ms. `)
+      + (d.rows.length
+        ? `${d.rows.length} thing${d.rows.length > 1 ? 's are' : ' is'} worth acting on, below.`
+        : 'Nothing here is worth acting on — the machine is not fighting itself.'))));
+
+  root.append(grid(
+    at('c4', card({
+      title: 'Slowdown against this machine at its best',
+      sub: 'Earned, never configured: the baseline is the fastest reading this machine has ever produced.',
+      shape: gauge({ pct: Math.min(100, Math.round((1 - d.probe.bestMs / d.probe.nowMs) * 100)),
+        center: f + 'x', sub: 'of its best time' }),
+    })),
+    at('c4', card({
+      title: 'Swap in use',
+      sub: d.swap ? `${gb(d.swap.usedMB / 1024)} GB of ${gb(d.swap.totalMB / 1024)} GB`
+        : 'Swap could not be read, which is not the same as a machine with no swap.',
+      shape: d.swap ? gauge({ pct: swapPct, center: swapPct + '%', sub: 'of swap in use' })
+        : el('p', { class: 'empty' }, '—'),
+      table: d.swap && d.swap.note ? tableOf(['What that means'], [[d.swap.note]]) : null,
+    })),
+    at('c4', card({
+      title: 'What is running',
+      sub: d.portsKnown ? 'Every process on the machine, and who is holding a port.'
+        // null and empty are different answers, and saying which one this is
+        // keeps an empty list from reading as good news.
+        : 'Listening ports could not be read, so an orphaned server would not appear below.',
+      shape: tile('processes', String(d.processCount), '', null),
+    })),
+  ));
+
+  if (!d.rows.length) return;
+
+  for (const r of d.rows) {
+    root.append(grid(at('c12', card({
+      title: r.title,
+      sub: `${r.costPct}% of a core · ${r.mb} MB · confidence: ${r.confidence}`,
+      shape: el('div', {},
+        el('p', {}, el('b', {}, 'Proof. '), r.proof),
+        el('p', {}, el('b', {}, 'What you lose if this is wrong. '), r.lose),
+        commandBlock(r.command, r.confidence === 'low'
+          ? 'read the first line before you run the second — this panel runs nothing'
+          : 'this panel runs nothing. you run it.')),
+    }))));
+  }
+}
+
+async function loadPressure() {
+  try {
+    state.pressure = await get('/api/pressure');
+    pressure(state.pressure);
+    $('#count-pressure').textContent = state.pressure.rows.length || '';
+  } catch (e) {
+    startupFailure('measuring pressure (/api/pressure)', e);
+  }
+}
+
 /* ------------------------------------------------------------------ tabs */
 function render() {
   // Each tab draws inside its own try: a payload that breaks one of them used
@@ -1465,6 +1551,9 @@ function goTo(tab, noHash) {
   for (const b of document.querySelectorAll('#tabs button')) b.setAttribute('aria-selected', String(b.dataset.tab === tab));
   for (const s of document.querySelectorAll('main section')) s.hidden = s.id !== `tab-${tab}`;
   if (tab === 'memory') refreshLight().catch((e) => startupFailure('measuring memory (/api/light)', e));
+  // Re-measured on every visit, deliberately. A saved reading of "how fast is
+  // this machine right now" is a reading of a moment that has passed.
+  if (tab === 'pressure') { pressure(null); loadPressure(); }
   // Cheap on purpose: configuration plus five packets to machines this
   // computer already uses. The two paid readings live behind their buttons.
   if (tab === 'internet') loadNetwork(false);
