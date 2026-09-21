@@ -7,6 +7,7 @@ const self = require('./lib/self');
 const dns = require('./lib/dns');
 const blocklist = require('./lib/blocklist');
 const network = require('./lib/network');
+const pressure = require('./lib/pressure');
 
 const PORT = process.env.PORT || 4127;
 const WEB = path.join(__dirname, 'web');
@@ -77,6 +78,11 @@ const server = http.createServer(async (req, res) => {
       while (HISTORY.length > MAX_POINTS) HISTORY.shift();
       return json(res, { ...d, history: HISTORY, opened: OPENED });
     }
+
+    // The Pressure tab. Cheap — one `ps`, one `launchctl list`, one `lsof` and
+    // a third of a second of deliberate arithmetic — but the arithmetic is the
+    // point, so it is behind its own route and never runs on load.
+    if (route === '/api/pressure') return json(res, await pressure.collect());
 
     if (route === '/api/cache') {
       const c = scan.readCache();
