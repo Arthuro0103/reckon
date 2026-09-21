@@ -83,10 +83,42 @@ suffering; the `…Bytes` fields are its state right now. Do not mix them on one
 
 ### `processList()` → array · **light**
 ```js
-[ { pid: 4711, rssKB: 224188, cpuPct: 1.4, command: '/Applications/…/Chrome', family: 'Chrome' } ]
+[ { pid: 4711, ppid: 1, rssKB: 224188, cpuPct: 1.4, ageS: 88231, tty: null,
+    command: '/Applications/…/Chrome', family: 'Chrome',
+    orphaned: false, systemManaged: true } ]
 ```
 Every process, unfiltered — the "under 2 MB changes nothing on screen" cut is a product
 decision and belongs to the caller. `[]` on failure.
+
+`ageS` is seconds since the process started, as a number to compute with — unlike
+`selfProcess().elapsed`, which is a display string. `null` where the platform does not
+publish a start time.
+
+`tty` is the controlling terminal, or **`null` for none**. Never the literal `??` that `ps`
+prints: a caller reading that sees a terminal named `??`.
+
+The last two fields are the ones that cost the most to get right, and the reason they live
+here instead of in a collector is that each platform reaches them by a different road.
+
+- **`orphaned`** — no living parent is responsible for this process. On macOS that is
+  `ppid === 1`, because the kernel reparents. On Windows nothing reparents, so it is
+  "the parent id points at a pid that has exited"; Windows reuses ids, so a recycled
+  number reads `false`. It errs toward silence, which is right for a field whose only job
+  is to put a `kill` on somebody's screen.
+- **`systemManaged`** — something other than a shell started this and is responsible for
+  it. **`orphaned` is not evidence of a leak until you have checked this**, and the two
+  look identical in a process table. macOS unions three nets, and needs all three:
+  `launchctl list`, the daemon directories, and **any executable inside an `.app`
+  bundle** — every GUI helper reports PID 1 as its parent because LaunchServices started
+  it that way.
+
+  The failure this prevents is not hypothetical. The first build of the Pressure collector
+  offered to kill 21 copies of `distnoted`, the macOS notification agent, on nothing but
+  "PID 1 and no terminal". Exactly **one** of those 21 appears in `launchctl list` — the
+  other twenty live in per-session domains the current domain does not enumerate.
+
+  `/usr/bin` is deliberately **not** a daemon directory on macOS: `yes`, `sleep`, `dd` and
+  `cat` live there, and those are precisely what a leaked load generator is built from.
 
 `family` is the grouping label the Memory tab renders, and **the vocabulary is part of the
 contract**: fourteen processes named `claude` are one thing to the person looking at the
@@ -98,6 +130,21 @@ falls back to the executable's own name.
 
 Summed RSS exceeds physical RAM because shared memory is counted in every process. The
 caller says so on screen; do not try to correct for it here.
+
+### `listeningPorts()` → array | null · **light** · OPTIONAL
+```js
+[ { pid: 83905, port: 3010 } ]
+```
+Every TCP socket in LISTEN state this user can see. One process may appear more than once.
+
+**`null` and `[]` are different answers and both are real.** `null` is "I could not find
+out"; `[]` is "nothing is listening". A caller that treats them the same tells somebody
+their orphaned dev server is harmless when it never checked.
+
+Unprivileged scope is correct here, not a shortfall — the server somebody forgot to stop
+is running as them.
+
+---
 
 ### `selfProcess(pid)` → object | null · **light**
 ```js
@@ -380,6 +427,9 @@ These are the places where a mechanical rename would change what reaches the scr
 - **Do not rename the wire format.** `web/app.js` reads `memory.vm.free`, `.active`,
   `.inactive`, `.wired`, `.compressed`. `memoryStats()` returns `freeBytes` and friends, so
   `lib/memory.js` maps once, in one object literal, and keeps emitting the old names.
+- **`processList()` costs two commands on macOS**, not one: the `ps` and a `launchctl list`
+  for `systemManaged`. It is still on the light path — `launchctl list` is a read of
+  launchd's own table and returns in milliseconds.
 - **`processList()` is unfiltered.** `lib/memory.js` must keep its own `rssKB < 2048` cut
   before computing `processCount` and `rssSumKB`, or both totals change.
 - **`volumeUsage().usedPct` is a number.** `lib/checks.js` currently does
