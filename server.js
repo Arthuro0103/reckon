@@ -66,7 +66,9 @@ const server = http.createServer(async (req, res) => {
 
   try {
     if (route === '/') return static_(res, 'index.html');
-    if (/^\/(app|charts)\.js$/.test(route) || /^\/(style|tokens)\.css$/.test(route)) return static_(res, route.slice(1));
+    if (/^\/(app|charts|pet)\.js$/.test(route) || /^\/(style|tokens|pet)\.css$/.test(route)) return static_(res, route.slice(1));
+    // The companion's preview: the drawing, reviewed up close before it is wired to anything.
+    if (route === '/pet') return static_(res, 'pet.html');
 
     if (route === '/api/self') return json(res, await self.measure());
 

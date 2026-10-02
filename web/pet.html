@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>reckon — companion</title>
+<link rel="stylesheet" href="/tokens.css">
+<link rel="stylesheet" href="/pet.css">
+</head>
+<body>
+
+<header class="pet-head">
+  <h1>The companion</h1>
+  <p>The lantern is the chosen one. Drag the slider: that number is what the real one will be fed with —
+  the swap, the seconds stolen. Everything you see moving is driven by it.</p>
+</header>
+
+<section class="pet-stage">
+  <div id="live" class="pet-live"></div>
+  <div class="pet-controls">
+    <div class="pet-readout"><b id="state-name">resting</b><span id="state-says"></span></div>
+    <label class="pet-slider">how bad is it
+      <input id="level" type="range" min="0" max="100" value="5" aria-label="how bad is it">
+      <output id="level-out">5</output>
+    </label>
+    <div class="pet-buttons" id="jump"></div>
+    <button id="afternoon" type="button" class="pet-play">play a bad afternoon</button>
+    <p class="pet-hint">Turn off animations in your system settings and it stays still: the flame, the rays
+    and the words say the same thing without moving.</p>
+  </div>
+</section>
+
+<section>
+  <h2 class="pet-h2">All four states, side by side</h2>
+  <div id="row" class="pet-gallery"></div>
+</section>
+
+<section>
+  <h2 class="pet-h2">Set aside</h2>
+  <p class="pet-note">The other two candidates, kept for comparison. Not being refined.</p>
+  <div id="aside" class="pet-aside"></div>
+</section>
+
+<script src="/pet.js"></script>
+<script>
+  const { STATES, CONCEPTS, svg, mount, resolve } = window.reckonPet;
+  const $ = (id) => document.getElementById(id);
+
+  // ---- the live one
+  const live = mount($('live'), 300, 'lantern');
+  const slider = $('level');
+  function show(l) {
+    const p = resolve(l);
+    live.set(l);
+    $('state-name').textContent = p.label;
+    $('state-says').textContent = p.says;
+    $('level-out').textContent = Math.round(l * 100);
+    slider.value = Math.round(l * 100);
+  }
+  slider.addEventListener('input', () => show(slider.value / 100));
+
+  const jump = $('jump');
+  for (const [id, s] of Object.entries(STATES)) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.textContent = s.label;
+    b.addEventListener('click', () => { stop(); show(s.level); });
+    jump.append(b);
+  }
+
+  // ---- a scripted afternoon: calm, a compile starts, swap fills, it clears
+  let timer = null;
+  const SCRIPT = [[0.05, 1800], [0.3, 2200], [0.5, 2200], [0.72, 2200], [0.95, 3800], [0.7, 1800], [0.4, 1800], [0.15, 1800], [0.05, 1800]];
+  function stop() { if (timer) { clearTimeout(timer); timer = null; $('afternoon').textContent = 'play a bad afternoon'; } }
+  $('afternoon').addEventListener('click', () => {
+    if (timer) return stop();
+    $('afternoon').textContent = 'stop';
+    let i = 0;
+    const step = () => {
+      const [l, ms] = SCRIPT[i % SCRIPT.length];
+      show(l); i++;
+      timer = setTimeout(step, ms);
+    };
+    step();
+  });
+  show(0.05);
+
+  // ---- the four states, each animated at its own tempo
+  for (const [id, s] of Object.entries(STATES)) {
+    const card = document.createElement('figure');
+    card.className = 'pet-card';
+    card.innerHTML = svg(id, 180, 'lantern', { uid: 'row' }) +
+      `<figcaption><b>${s.label}</b><span>${s.says}</span></figcaption>`;
+    $('row').append(card);
+  }
+
+  // ---- the two that were not chosen (static: they never got a motion design)
+  for (const concept of CONCEPTS.filter((c) => c !== 'lantern')) {
+    const g = document.createElement('div');
+    g.className = 'pet-aside-group';
+    g.innerHTML = `<h3>${concept}</h3>` +
+      Object.keys(STATES).map((k) => `<span class="pet-chip">${svg(k, 72, concept, { uid: 'aside' })}</span>`).join('');
+    $('aside').append(g);
+  }
+</script>
+</body>
+</html>

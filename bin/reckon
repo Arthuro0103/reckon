@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 'use strict';
 // `reckon` starts the panel. `reckon scan` runs a deep scan in the terminal.
+// `reckon watch` is a separate, opt-in companion that warns when the machine struggles.
 //
 // This is the entry point `npx reckon` runs, on whatever Node the caller
 // happens to have — including one older than the "engines": ">=18" this
@@ -23,4 +24,5 @@ const arg = process.argv[2];
 if (arg === 'scan') require('./scan.js');
 else if (arg === 'check') require('./check.js');
 else if (arg === 'report') require('./report.js');
+else if (arg === 'watch') require('../lib/watch').main(process.argv.slice(3));
 else require('../server.js');

@@ -1005,6 +1005,288 @@ function asUnsupportedPlatform() {
   fail('the suite fails on a platform with no implementation — CI will fail', why.trim().slice(0, 160));
 }
 
+// The companion. CONTRIBUTING.md §5 says status is never a colour, and a pet that
+// turns red when the machine is struggling is the first thing anyone would draw.
+// So the rule is enforced on the drawing itself: every colour it emits must be a
+// design token, and the four states must differ by SHAPE, or "uneasy" is just
+// "watching" with a label.
+function petStatusIsShape() {
+  const pet = require(path.join(ROOT, 'web/pet.js'));
+  const ids = Object.keys(pet.STATES);
+  if (ids.length >= 4) ok(`the companion has ${ids.length} states`);
+  else fail(`the companion has ${ids.length} states`, 'resting, watching, uneasy and strained are the contract');
+
+  const drawn = {};
+  for (const concept of pet.CONCEPTS) for (const id of ids) drawn[`${concept}/${id}`] = pet.svg(id, 120, concept);
+  if (pet.CONCEPTS.length >= 3) ok(`${pet.CONCEPTS.length} candidate creatures, ${Object.keys(drawn).length} drawings`);
+  else fail(`only ${pet.CONCEPTS.length} candidate creatures`, 'the owner picks between at least three');
+
+  const loose = [];
+  for (const [id, markup] of Object.entries(drawn)) {
+    for (const m of markup.matchAll(/(?:fill|stroke)="([^"]+)"/g)) {
+      const v = m[1];
+      if (v !== 'none' && !v.startsWith('var(--') && !v.startsWith('url(#') && !/^color-mix\(in srgb, var\(--[a-z0-9]+\), var\(--[a-z0-9]+\) \d+%\)$/.test(v)) loose.push(`${id}: ${v}`);
+    }
+  }
+  if (loose.length) fail('the companion uses a colour that is not a design token', loose.join(', '));
+  else ok('every colour the companion draws is a design token');
+
+  // The drawing is a string, so nothing stops an element from declaring one
+  // attribute twice. Browsers forgive it when a page sets innerHTML; anything that
+  // reads the file as XML (a thumbnail, an export, a screenshot tool) refuses the
+  // whole drawing. That is how a duplicate `fill` once shipped unnoticed.
+  const doubled = [];
+  for (const [id, markup] of Object.entries(drawn))
+    for (const tag of markup.matchAll(/<[a-zA-Z][^>]*>/g)) {
+      const names = [...tag[0].matchAll(/\s([a-zA-Z:-]+)="/g)].map((m) => m[1]);
+      const dup = names.find((n, i) => names.indexOf(n) !== i);
+      if (dup) doubled.push(`${id}: ${dup}`);
+    }
+  if (doubled.length) fail('a companion drawing declares an attribute twice', [...new Set(doubled)].join(', '));
+  else ok('no companion drawing declares an attribute twice');
+
+  // The lantern may glow in colour, but never in the palette's red or green: those
+  // are the two hues a traffic light teaches people to read as good and bad.
+  const trafficLight = Object.entries(drawn).filter(([, m]) => /var\(--s6\)|var\(--s8\)/.test(m)).map(([id]) => id);
+  if (trafficLight.length) fail('the companion uses the palette red or green', trafficLight.join(', '));
+  else ok('the companion never uses the palette red or green');
+
+  // Within ONE creature, no two states may be the same picture: a state that only
+  // changes its label is not a state.
+  const same = [];
+  for (const concept of pet.CONCEPTS) {
+    const seen = new Set();
+    for (const id of ids) { const m = drawn[`${concept}/${id}`]; if (seen.has(m)) same.push(`${concept}/${id}`); seen.add(m); }
+  }
+  if (same.length) fail('two companion states draw the same picture', same.join(', '));
+  else ok('no two states of one creature draw the same picture');
+
+  // It moves, and it can be told to stop. The motion is part of the drawing.
+  const strained = pet.svg('strained');
+  if (/@keyframes pet-shake/.test(strained) && /@keyframes pet-flicker/.test(strained)) ok('the lantern carries its own animation');
+  else fail('the lantern has no animation in its markup', 'the drawing is meant to move');
+  if (/prefers-reduced-motion:\s*reduce/.test(strained)) ok('the animation stops for prefers-reduced-motion');
+  else fail('the animation ignores prefers-reduced-motion', 'a moving companion must be stoppable');
+
+  // The first strained drawing looked crooked. Caught mid-swing, a wide sway is the
+  // same picture, so at the top of the scale the lantern must tremble, not swing.
+  const swayOf = (input) => Number((pet.svg(input).match(/--sway:([\d.]+)deg/) || [])[1]);
+  if (swayOf('strained') <= 2) ok(`the strained lantern sways ${swayOf('strained')} deg at most, so it does not read as crooked`);
+  else fail(`the strained lantern sways ${swayOf('strained')} deg`, 'caught mid-swing that reads as a crooked lantern');
+
+  // More strain, faster motion: the tempo is the measurement, not decoration.
+  const periodOf = (input) => Number((pet.svg(input).match(/--swingT:([\d.]+)s/) || [])[1]);
+  if (periodOf(0.9) < periodOf(0.4) && periodOf(0.4) < periodOf(0.05)) ok('a worse reading moves faster');
+  else fail('the tempo does not follow the reading', `${periodOf(0.05)}s, ${periodOf(0.4)}s, ${periodOf(0.9)}s`);
+
+  // From 80 to 100 the lantern is in its last state, and the first version drew the
+  // same picture across that whole stretch: the part of the scale that matters most
+  // was the part that told you the least. Every step of five must look different.
+  const top = [0.8, 0.85, 0.9, 0.95, 1].map((n) => pet.svg(n));
+  if (new Set(top).size === top.length) ok('80, 85, 90, 95 and 100 each draw a different lantern');
+  else fail('two readings between 80 and 100 draw the same lantern', 'the last stretch must keep changing');
+  const rays = (m) => (m.match(/class="pet-ray-l"/) ? m.split('class="pet-ray-r"')[0].split('<path').length - 1 : 0);
+  const shakeOf = (n) => Number((pet.svg(n).match(/--shake:([\d.]+)px/) || [])[1]);
+  if (rays(pet.svg(1)) > rays(pet.svg(0.8)) && shakeOf(1) > shakeOf(0.85) && shakeOf(0.85) > shakeOf(0.8))
+    ok('more rays and a harder tremble as the reading climbs to 100');
+  else fail('the top of the scale does not escalate', `rays ${rays(pet.svg(0.8))} -> ${rays(pet.svg(1))}, tremble ${shakeOf(0.8)} -> ${shakeOf(0.85)} -> ${shakeOf(1)}`);
+  if (/color-mix\(in srgb, var\(--s2\), var\(--ink\)/.test(pet.svg(1)) && !/color-mix/.test(pet.svg(0.5))) ok('the glow only heats up past 80');
+  else fail('the glow heating is wrong', 'it must start at 80 and never touch the calmer states');
+
+  // A measurement maps to a state, so the real reading can drive it directly.
+  const names = [0.05, 0.3, 0.6, 0.95].map((n) => pet.resolve(n).label).join(',');
+  if (names === 'resting,watching,uneasy,strained') ok('a measurement from 0 to 1 picks the right state');
+  else fail('a measurement picks the wrong state', names);
+
+  try { pet.svg('resting', 120, 'nonsense'); fail('an unknown creature must throw, not draw a blank'); }
+  catch (e) { if (e instanceof TypeError) ok('an unknown creature throws instead of drawing nothing'); else throw e; }
+
+  try { pet.svg('nonsense'); fail('an unknown state must throw, not draw a blank'); }
+  catch (e) { if (e instanceof TypeError) ok('an unknown state throws instead of drawing nothing'); else throw e; }
+}
+
+// `reckon watch` decides when to interrupt a person, so its rules are tested as rules.
+// Each case below is something that actually happened on the machine this was
+// written on, or the exact way the first version of it was wrong.
+function watchDecides() {
+  const w = require(path.join(ROOT, 'lib/watch.js'));
+  const pet = require(path.join(ROOT, 'web/pet.js'));
+  const R = (o) => ({ swapOfRam: 0.05, swapUsedMB: 800, swapTotalMB: 1024, ramMB: 16384, gainedOfRam: null, spanMs: null,
+    factor: 1.1, probe: { nowMs: 350, bestMs: 319, factor: 1.1 }, rows: [], load1: 60, load5: 60, ncpu: 10, ...o });
+  const MIN = 60_000;
+  const run = (readings, start = 0) => {
+    let st = w.emptyState(), all = [];
+    readings.forEach((r, i) => { const o = w.step(st, r, start + i * 30_000); st = o.state; all.push(...o.events); });
+    return { st, events: all };
+  };
+
+  // 1. Load alone never alerts. A watcher built on load rang four times, at 72, 61,
+  //    50 and 44, during an ordinary compile with swap at 0 and half the RAM free.
+  const busy = run(Array.from({ length: 8 }, () => R({ load5: 72, load1: 72 })));
+  if (busy.events.length === 0) ok('a load of 72 on 10 cores, with nothing else wrong, is silent');
+  else fail('load alone raised an alert', busy.events.map((e) => e.kind).join(', '));
+
+  // 2. The bad afternoon: 12.7 GB of swap on a 16 GB machine, the probe 20x its best.
+  const bad = R({ swapOfRam: 12700 / 16384, swapUsedMB: 12700, factor: 20, probe: { nowMs: 6140, bestMs: 300, factor: 20 } });
+  const one = run([bad]);
+  const kinds = one.events.filter((e) => e.type === 'alert').map((e) => e.kind).sort().join(',');
+  if (kinds === 'stolen,swap') ok('the bad afternoon raises exactly two alerts: seconds stolen and swap');
+  else fail('the bad afternoon raised the wrong alerts', kinds || 'none');
+  const empty = one.events.filter((e) => !e.title || !e.cost || !e.proof || !e.lose);
+  if (!empty.length) ok('every alert carries its cost, its proof and what you lose if it is wrong');
+  else fail('an alert went out with a gap in it', empty.map((e) => e.kind).join(', '));
+
+  // 3. One alert per problem, not one per reading.
+  const long = run(Array.from({ length: 12 }, () => bad));
+  if (long.events.filter((e) => e.type === 'alert').length === 2 && long.events.length === 2) ok('twelve identical readings ring twice, not twenty-four times');
+  else fail('the same problem rang more than once', String(long.events.length) + ' events');
+
+  // 4. It speaks again only when it gets worse by a step.
+  const stepUp = run([R({ factor: 5, probe: { nowMs: 1600, bestMs: 319, factor: 5 } }), R({ factor: 6, probe: { nowMs: 1900, bestMs: 319, factor: 6 } }),
+    R({ factor: 11, probe: { nowMs: 3500, bestMs: 319, factor: 11 } })]);
+  const seq = stepUp.events.map((e) => `${e.type}:${e.kind}`).join(' ');
+  if (seq === 'alert:stolen worse:stolen') ok('5x alerts, 6x stays quiet, 11x says it got worse');
+  else fail('the escalation is wrong', seq);
+
+  // 5. Clearing needs two calm readings in a row, so a flapping line cannot ring.
+  const calm = R({});
+  const one2 = run([bad, calm]);
+  const two2 = run([bad, calm, calm]);
+  if (!one2.events.some((e) => e.type === 'clear') && two2.events.filter((e) => e.type === 'clear').length === 2) ok('it clears after two calm readings, not one');
+  else fail('clearing is not debounced', `${one2.events.length} / ${two2.events.length} events`);
+
+  // 6. After a clear it stays quiet for a cooldown.
+  const soon = run([bad, calm, calm, bad]);                 // 90 s later
+  const later = (() => {
+    let st = w.emptyState(); const ev = [];
+    for (const [r, at] of [[bad, 0], [calm, 30_000], [calm, 60_000], [bad, 60_000 + 11 * MIN]]) { const o = w.step(st, r, at); st = o.state; ev.push(...o.events); }
+    return ev;
+  })();
+  const alertsOf = (evs) => evs.filter((e) => e.type === 'alert').length;
+  if (alertsOf(soon.events) === 2 && alertsOf(later) === 4) ok('inside the ten-minute cooldown it stays quiet; after it, it may speak again');
+  else fail('the cooldown is wrong', `${alertsOf(soon.events)} inside, ${alertsOf(later)} after`);
+
+  // 7. A reading that was not taken is unknown, not calm.
+  const unknown = run([bad, ...Array.from({ length: 6 }, () => R({ factor: null, probe: null, swapOfRam: 12700 / 16384, swapUsedMB: 12700 }))]);
+  const cleared = unknown.events.filter((e) => e.type === 'clear' && e.kind === 'stolen');
+  if (!cleared.length) ok('a probe that did not run cannot clear a "stolen" alert');
+  else fail('an unmeasured reading cleared an alert', 'not measured must never read as calm');
+
+  // 8. An alert that cannot fill its three parts is not sent.
+  const noProof = run([R({ factor: 6, probe: null })]);
+  if (!noProof.events.length) ok('an alert with no proof to show is not sent');
+  else fail('an alert went out without its proof', noProof.events[0].kind);
+
+  // 9. Named causes: only the confident and the costly.
+  const row = (o) => ({ id: 'swarm-yes', title: '365 copies of yes, orphaned', kb: 171 * 1024, costPct: 300, confidence: 'high',
+    proof: '365 processes running the same executable.', lose: 'Nothing that can be named.', command: 'kill 101 102', ...o });
+  const withRow = run([R({ rows: [row()] })]);
+  const stale = run([R({ rows: [row({ id: 'stale-sessions', confidence: 'low' })] })]);
+  const tiny = run([R({ rows: [row({ costPct: 4, kb: 1024 })] })]);
+  if (withRow.events.some((e) => e.kind === 'row:swarm-yes' && e.command === 'kill 101 102')) ok('a costly orphaned swarm alerts, with the command to hand');
+  else fail('a costly swarm did not alert');
+  if (!stale.events.length && !tiny.events.length) ok('a low-confidence row and a cheap one stay silent');
+  else fail('a row that should stay silent raised an alert');
+
+  // 10. The level, and the bug in the first version of it.
+  const L = w.levelOf;
+  if (L({ swapOfRam: 742 / 16384 }) < 0.15) ok('742 MB of swap on a 16 GB machine is resting, not "72% full"');
+  else fail('a trivial swap reads as trouble', String(L({ swapOfRam: 742 / 16384 })));
+  if (L({ swapOfRam: 0.79 }) === 1 && L({ factor: 20 }) === 1 && L({}) === 0 && L({ factor: 1.1 }) < 0.15) ok('the level runs from 0 (calm or unmeasured) to 1 (the bad afternoon)');
+  else fail('the level scale is wrong');
+  let mono = true, prev = -1;
+  for (let f = 1; f <= 16; f += 0.5) { const v = L({ factor: f }); if (v < prev) mono = false; prev = v; }
+  if (mono) ok('a slower machine never lowers the level');
+  else fail('the level is not monotonic in seconds stolen');
+
+  // 11. lib/ and web/ write the same cut-offs twice on purpose; they must agree.
+  let drift = null;
+  for (let l = 0; l <= 1.0001; l += 0.01) if (w.stateOf(l) !== pet.resolve(l).label) { drift = l.toFixed(2); break; }
+  if (!drift) ok('the watcher and the lantern agree on where each state begins');
+  else fail('the watcher and the lantern disagree about the states', `at ${drift}`);
+
+  // 12. The banner cannot run anything: the text travels as data.
+  const darwin = read('lib/platform/darwin.js');
+  const fn = (darwin.match(/async function notify\([\s\S]*?\n}\n/) || [''])[0];
+  if (/run\('osascript'/.test(fn) && /item 2 of argv/.test(fn) && !/\bsh\(/.test(fn) && !/\$\{/.test(fn)) ok('the notification passes its text as argv to a fixed script, never through a shell');
+  else fail('notify() may splice text into a script or a shell line', 'the text must travel as argv');
+
+  // 13. Where it writes, and how it is started.
+  if (w.CACHE_DIR.endsWith(path.join('.cache', 'reckon')) && w.STATE_FILE.startsWith(w.CACHE_DIR) && w.LOG_FILE.startsWith(w.CACHE_DIR)) ok('watch writes only inside ~/.cache/reckon');
+  else fail('watch writes outside ~/.cache/reckon', `${w.STATE_FILE} ${w.LOG_FILE}`);
+  if (w.parse(['--interval', '5']).bad && !w.parse(['--interval', '60']).bad && w.parse(['--bogus']).bad) ok('the options refuse nonsense: an interval under ten seconds, an unknown flag');
+  else fail('the options accept nonsense');
+  if (/arg === 'watch'/.test(read('bin/reckon'))) ok('bin/reckon dispatches `watch`');
+  else fail('bin/reckon does not dispatch `watch`');
+  if (!/setInterval|autostart|launchctl|LaunchAgents|crontab/.test(read('lib/watch.js'))) ok('watch never installs itself or schedules itself');
+  else fail('watch installs or schedules itself', 'it must only ever start when someone runs it');
+}
+
+// The corner window shows text that came from the machine — process names end up in an
+// alert's title — so what it may do with that text is tested, not assumed.
+async function cornerIsSafe() {
+  const w = require(path.join(ROOT, 'lib/watch.js'));
+  const html = read('web/corner.html');
+
+  const used = [...html.matchAll(/\$\('([a-z-]+)'\)/g)].map((m) => m[1]);
+  const declared = new Set([...html.matchAll(/\sid="([a-z-]+)"/g)].map((m) => m[1]));
+  const missing = [...new Set(used)].filter((id) => !declared.has(id));
+  if (!missing.length) ok('every element the corner page reaches for exists');
+  else fail('the corner page reaches for elements that are not there', missing.join(', '));
+
+  // A process can be NAMED anything. Text from the machine goes in with textContent;
+  // innerHTML on it would turn a process called `<img onerror=…>` into script.
+  const scripts = (html.match(/<script>[\s\S]*?<\/script>/g) || []).join('\n');
+  if (!/innerHTML|outerHTML|insertAdjacentHTML|document\.write|eval\(|new Function/.test(scripts)) ok('the corner page writes machine text with textContent only');
+  else fail('the corner page could turn a process name into markup', 'use textContent');
+  if (!/https?:\/\//.test(html)) ok('the corner page reaches for nothing outside this machine');
+  else fail('the corner page names an external address');
+  if (!/\.(click|submit)\(\)|exec|spawn/.test(scripts) && /writeText/.test(scripts)) ok('the command is shown and can be copied; the page never runs it');
+  else fail('the corner page does something with the command other than show and copy it');
+
+  const files = Object.values(w.CORNER_FILES).map((f) => f[0]);
+  const gone = files.filter((f) => !fs.existsSync(path.join(ROOT, 'web', f)));
+  if (!gone.length && files.length === 3) ok('the corner server serves exactly three files, and they exist');
+  else fail('the corner server serves the wrong files', gone.join(', ') || String(files.length));
+  const src = read('lib/watch.js');
+  if (/server\.listen\(CORNER_PORT, '127\.0\.0\.1'/.test(src) && /remoteAddress/.test(src) && /local only/.test(src)) ok('the corner server listens on 127.0.0.1 only and refuses other callers');
+  else fail('the corner server is not loopback-only');
+
+  // The window opens once when things turn bad, and again only after a real calm.
+  const platform = require(path.join(ROOT, 'lib/platform'));
+  const real = platform.openWindow;
+  let opened = 0, urls = [];
+  platform.openWindow = async (u) => { opened++; urls.push(u); return true; };
+  try {
+    const ctx = { corner: true, cornerOpenedAt: null, calmSince: null, snapshot: null };
+    const at = async (state, t) => { ctx.snapshot = { state }; await w.maybeOpenCorner(ctx, t); };
+    await at('resting', 0);
+    if (opened === 0) ok('a calm machine opens no window');
+    else fail('a window opened on a calm machine');
+    await at('uneasy', 1000); await at('strained', 2000); await at('resting', 3000); await at('uneasy', 60_000);
+    if (opened === 1) ok('it opens once when things turn bad, and not again while they stay bad');
+    else fail('the corner window opened more than once for one bad stretch', String(opened));
+    await at('resting', 61_000); await at('resting', 61_000 + 121_000); await at('uneasy', 190_000);
+    if (opened === 2) ok('after two calm minutes it may open again');
+    else fail('the corner window did not reopen after a real calm', String(opened));
+    if (urls.every((u) => /^http:\/\/127\.0\.0\.1:\d+\/corner$/.test(u))) ok('it only ever asks to open its own loopback address');
+    else fail('it asked to open something other than its own address', urls.join(', '));
+    opened = 0;
+    const off = { corner: false, cornerOpenedAt: null, calmSince: null, snapshot: { state: 'strained' } };
+    await w.maybeOpenCorner(off, 1);
+    if (opened === 0) ok('without --corner no window ever opens');
+    else fail('a window opened without --corner');
+  } finally { platform.openWindow = real; }
+
+  // The seam refuses to be a way to open any page.
+  const darwin = require(path.join(ROOT, 'lib/platform/darwin.js'));
+  for (const bad of ['https://example.com/', 'http://127.0.0.1:4128/../../etc', 'http://localhost:4128/corner', 'file:///etc/passwd']) {
+    try { await darwin.openWindow(bad); fail('openWindow accepted an address that is not its own', bad); return; }
+    catch (e) { if (!(e instanceof TypeError)) throw e; }
+  }
+  ok('openWindow throws on anything that is not reckon\'s own loopback address');
+}
+
 /* A suite that dies tells you less than one that reports. An unhandled
  * rejection here printed an error object with no stack and no test name, three
  * times over, and finding which line produced it cost more than the bug did.
@@ -1036,6 +1318,9 @@ async function step(name, fn) {
   await step('internet', async () => { await networkPromises(); });
   await step('packaging', async () => { await packagedBundle(); });
   await step('safety', async () => { await safety(); await noHardcodedPaths(); });
+  await step('companion', async () => { await petStatusIsShape(); });
+  await step('watch', async () => { await watchDecides(); });
+  await step('corner', async () => { await cornerIsSafe(); });
   if (!process.env.RECKON_CHECK_CHILD) await step('other platforms', asUnsupportedPlatform);
   console.log(failures ? `\n${failures} FAILURE(S)\n` : '\nall checks passed\n');
   process.exit(failures ? 1 : 0);

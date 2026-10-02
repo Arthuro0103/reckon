@@ -8,6 +8,7 @@
   "scripts": {
     "start": "node server.js",
     "scan": "node bin/scan.js",
+    "watch": "node bin/reckon watch",
     "test": "node bin/check.js"
   },
   "keywords": ["macos", "disk-space", "docker", "dashboard", "cleanup", "local-first", "no-dependencies"],

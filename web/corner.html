@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>reckon</title>
+<link rel="stylesheet" href="/tokens.css">
+<style>
+  html, body { margin: 0; height: 100%; }
+  body { background: var(--bg2); color: var(--ink); font: 12px/1.45 var(--sans); display: flex; flex-direction: column;
+    align-items: center; padding: 10px 12px 12px; box-sizing: border-box; overflow: hidden; }
+  #lantern { flex: none; height: 120px; display: grid; place-items: center; }
+  #title { font-size: 13px; font-weight: 600; text-align: center; margin: 2px 0 4px; min-height: 2.8em; }
+  #cost { color: var(--ink2); text-align: center; margin: 0 0 8px; max-height: 5.8em; overflow: hidden; }
+  #cmdbox { width: 100%; }
+  #cmd { margin: 0 0 6px; padding: 6px 8px; background: var(--bg3); border: 1px solid var(--line2); border-radius: 6px;
+    font: 11px/1.4 var(--mono); white-space: pre-wrap; word-break: break-all; max-height: 4.2em; overflow: auto; }
+  #copy { width: 100%; background: var(--bg3); color: var(--ink); border: 1px solid var(--line2); border-radius: 6px;
+    padding: 5px 8px; font: inherit; cursor: pointer; }
+  #copy:hover { background: var(--bg4); }
+  #foot { margin-top: auto; color: var(--ink3); font-size: 11px; text-align: center; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+  <div id="lantern"></div>
+  <div id="title">reading…</div>
+  <p id="cost"></p>
+  <div id="cmdbox" hidden>
+    <pre id="cmd"></pre>
+    <button id="copy" type="button">copy the command</button>
+  </div>
+  <div id="foot"></div>
+
+<script src="/pet.js"></script>
+<script>
+  const $ = (id) => document.getElementById(id);
+  const lantern = window.reckonPet.mount($('lantern'), 120, 'lantern');
+
+  // Small and in the corner. Browsers allow a script to move and resize a window it
+  // is the only page of; if this one refuses, the window is simply where it opened.
+  try { window.resizeTo(230, 330); window.moveTo(screen.availWidth - 250, 40); } catch (e) { /* stays where it opened */ }
+
+  // The page reads what `reckon watch` already measured. It measures nothing itself,
+  // and it never runs the command it shows: it is text, and a button that copies it.
+  const POLL_MS = 3000;
+  const CLOSE_AFTER_CALM_MS = 90_000;
+  let calmSince = null;
+
+  async function refresh() {
+    let d;
+    try {
+      const r = await fetch('/api/watch', { cache: 'no-store' });
+      d = await r.json();
+    } catch (e) {
+      $('title').textContent = 'lost contact with reckon watch';
+      $('cost').textContent = 'It may have been stopped. Nothing is being watched.';
+      $('cmdbox').hidden = true;
+      return;
+    }
+    if (!d.running) {
+      lantern.set(0);
+      $('title').textContent = 'reckon watch stopped';
+      $('cost').textContent = '';
+      $('cmdbox').hidden = true;
+      $('foot').textContent = 'nothing is being watched';
+      return;
+    }
+    lantern.set(d.level);
+    const h = d.headline;
+    $('title').textContent = h ? h.title : (d.active.length ? 'still watching a problem' : 'all quiet');
+    $('cost').textContent = h ? h.cost : '';
+    $('cmdbox').hidden = !(h && h.command);
+    if (h && h.command) $('cmd').textContent = h.command;
+    $('foot').textContent = `${d.state} · level ${Math.round(d.level * 100)}`;
+
+    // A companion that is only wanted while there is something to say goes away by itself.
+    if (d.state === 'resting' || d.state === 'watching') {
+      calmSince = calmSince || Date.now();
+      if (Date.now() - calmSince > CLOSE_AFTER_CALM_MS) { try { window.close(); } catch (e) { /* the window stays; harmless */ } }
+    } else calmSince = null;
+  }
+
+  $('copy').addEventListener('click', async () => {
+    try { await navigator.clipboard.writeText($('cmd').textContent); $('copy').textContent = 'copied'; }
+    catch (e) { $('copy').textContent = 'select it and copy by hand'; }
+    setTimeout(() => { $('copy').textContent = 'copy the command'; }, 1800);
+  });
+
+  refresh();
+  setInterval(refresh, POLL_MS);
+</script>
+</body>
+</html>

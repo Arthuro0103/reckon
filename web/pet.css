@@ -1,0 +1,40 @@
+/* The companion's preview page. Colours come from tokens.css only. */
+body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.5 system-ui, sans-serif; padding: 32px; }
+.pet-head h1 { margin: 0 0 4px; font-size: 22px; font-weight: 600; }
+.pet-head p { margin: 0 0 28px; color: var(--ink2); }
+.pet-gallery { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 20px; }
+.pet-card { margin: 0; padding: 24px 16px; background: var(--bg2); border: 1px solid var(--line);
+  border-radius: 12px; text-align: center; }
+.pet-card figcaption { margin-top: 14px; display: flex; flex-direction: column; gap: 2px; }
+.pet-card figcaption b { font-size: 16px; }
+.pet-card figcaption span { color: var(--ink2); font-size: 13px; }
+.pet-size { margin-top: 36px; }
+.pet-size h2 { font-size: 14px; font-weight: 600; color: var(--ink2); margin: 0 0 12px; }
+.pet-row { display: flex; gap: 16px; }
+.pet-chip { padding: 10px; background: var(--bg2); border: 1px solid var(--line); border-radius: 12px; }
+.pet-concept { margin-bottom: 40px; }
+.pet-concept h2 { margin: 0 0 2px; font-size: 18px; font-weight: 600; text-transform: capitalize; }
+.pet-concept > p { margin: 0 0 14px; color: var(--ink2); font-size: 13px; }
+.pet-concept .pet-row { margin-top: 14px; }
+
+/* the live stage */
+.pet-stage { display: grid; grid-template-columns: minmax(300px, 340px) 1fr; gap: 32px; align-items: center;
+  background: var(--bg2); border: 1px solid var(--line); border-radius: 16px; padding: 28px; margin-bottom: 40px; }
+.pet-live { display: grid; place-items: center; min-height: 320px; }
+.pet-readout { display: flex; flex-direction: column; margin-bottom: 18px; }
+.pet-readout b { font-size: 24px; font-weight: 600; }
+.pet-readout span { color: var(--ink2); min-height: 22px; }
+.pet-slider { display: grid; grid-template-columns: 1fr auto; gap: 6px 12px; color: var(--ink2); font-size: 13px; }
+.pet-slider input { grid-column: 1 / 2; width: 100%; accent-color: var(--cyan); }
+.pet-slider output { color: var(--ink); font-variant-numeric: tabular-nums; }
+.pet-buttons { display: flex; gap: 8px; flex-wrap: wrap; margin: 18px 0 12px; }
+.pet-buttons button, .pet-play { background: var(--bg3); color: var(--ink); border: 1px solid var(--line2);
+  border-radius: 8px; padding: 8px 14px; font: inherit; font-size: 13px; cursor: pointer; }
+.pet-buttons button:hover, .pet-play:hover { background: var(--bg4); }
+.pet-hint { margin: 16px 0 0; color: var(--ink3); font-size: 12px; max-width: 46ch; }
+.pet-h2 { font-size: 14px; font-weight: 600; color: var(--ink2); margin: 0 0 12px; }
+.pet-note { margin: -6px 0 14px; color: var(--ink3); font-size: 13px; }
+.pet-aside { display: flex; gap: 32px; flex-wrap: wrap; margin-bottom: 40px; }
+.pet-aside-group h3 { margin: 0 0 8px; font-size: 13px; font-weight: 600; color: var(--ink2); text-transform: capitalize; }
+.pet-aside-group .pet-chip { display: inline-block; margin-right: 8px; }
+@media (max-width: 720px) { .pet-stage { grid-template-columns: 1fr; } }
