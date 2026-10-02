@@ -65,7 +65,8 @@ inverts, the footer says so instead of hiding it.
 
 The architecture follows from that. No framework, no bundler, **no dependencies at all**.
 Collection happens on demand — between your clicks the process sits at 0% CPU. There is no
-background daemon and no telemetry; nothing leaves the machine.
+background daemon and no telemetry; nothing leaves the machine. The one thing that
+watches is `reckon watch`, below, and it never starts unless you run it.
 
 ---
 
@@ -102,6 +103,7 @@ never end up in a commit.
 |---|---|
 | **Overview** | the decisions, ordered by how much they free. The screen that opens |
 | **Memory** | what is using RAM now, grouped by app, and how much each changed since you opened |
+| **Pressure** | what is stealing time from the machine right now, counted in seconds instead of bytes: orphaned swarms, stale sessions, dev servers nobody is using |
 | **Disk** | where the space went, folder by folder, with a verdict: `disposable` · `yours` · `cannot judge` |
 | **Internet** | which link is carrying traffic, the round trip to your router and to the resolvers you already use, and — behind their own buttons, with the cost stated first — throughput and the Wi-Fi radio |
 | **Checks** | what is broken and has a fix |
@@ -110,6 +112,41 @@ never end up in a commit.
 DNS is a **separate tab on purpose**. A bug in the monitor shows a wrong number; a bug in DNS
 leaves you without internet, and you will not connect the two. Neither can take the other down,
 and neither imports the other's code.
+
+---
+
+## Watching, if you ask
+
+`reckon watch` is a separate command for the case where the machine starts to struggle while
+nobody has the panel open. It never starts by itself, and the dashboard server does not change.
+
+```bash
+node bin/reckon watch             # until ctrl+c
+node bin/reckon watch --once      # one full reading, printed, then exit
+node bin/reckon watch --corner    # also show the lantern in a small window, only when things turn bad
+```
+
+It says what it costs when it starts (about 50 MB, one cheap reading every 30 seconds), writes only
+inside `~/.cache/reckon/` (`watch.json`, `watch.log`), and stops when you press ctrl+c. It never runs
+the command it shows you.
+
+**It does not alert on load.** Load counts runnable work, and a machine doing a lot of legitimate work
+looks the same as one that is suffering: an ordinary parallel compile read a load of 72 on ten cores
+with swap at zero and half the RAM free, and the probe said the machine was 1.1x its best. So it
+watches three things: **seconds stolen** (the probe from the Pressure tab, against the best this machine
+has ever done), **swap against RAM** and how fast it is filling (not against the swap file's own size,
+which macOS grows on demand), and **orphaned swarms** that are costing real time. Load may make it go
+and look; it is never the answer.
+
+An alert says how much it costs, the proof of the number, and what you lose if it is wrong. One problem
+rings once, again only if it gets worse by a step, and is announced once when it clears. The banner is
+a native macOS notification; if you never see one, check System Settings > Notifications for Script Editor.
+
+The **corner window** is the lantern from `/pet`, fed with the real number. It opens when things turn
+bad, closes by itself when they calm, shows the command as text with a copy button, and is served from
+the watcher itself on `127.0.0.1:4128`. The page in it asks the watcher for its numbers every three
+seconds; that is the one place this project polls, and it exists only if you asked for `--corner`. It is
+a browser window, so it is not always on top: over a full-screen app, the banner is what reaches you.
 
 ---
 

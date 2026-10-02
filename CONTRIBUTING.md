@@ -54,6 +54,19 @@ jobs: link a number to its proof, or mark a boundary between two classes of thin
 request that reaches for red or green to mean "bad" or "good" is reintroducing the exact
 signal this project was built to remove — see the README for why.
 
+**One exception, decided by the owner on 2026-09-29: the companion's glow.** The lantern
+in `web/pet.js` lights up in colour as the machine struggles — cyan, then yellow, then
+orange. It stays inside the rule's reasoning, and `bin/check.js` holds it there:
+
+- **Never red or green.** `--s6` and `--s8` are the two hues a traffic light taught people to
+  read as good and bad; the check fails if the companion uses either.
+- **Colour is never the only signal.** The flame, the number of rays, the tremor and the
+  sentence beside it say the same thing, so somebody who cannot tell hues apart loses nothing.
+- **Tokens only.** Every colour is a `web/tokens.css` variable.
+
+The exception covers the companion and nothing else. A status colour anywhere in the
+dashboard is still declined.
+
 ## 6. Chart rules
 
 - **One axis per chart, never two.** Two measures on different scales become two small
