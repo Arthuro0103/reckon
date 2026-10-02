@@ -146,6 +146,29 @@ is running as them.
 
 ---
 
+### `notify(title, body)` → boolean | null · **free** · OPTIONAL
+Shows a native notification. `true` when the system accepted it, `false` when it refused
+(notifications switched off, no permission), `null` on a platform that does not implement
+it. **Never throws** — a watcher that dies because a banner failed has stopped watching.
+
+The text must reach the notification as data, never as part of a script or a shell line:
+on macOS it travels as `argv` to a fixed AppleScript, so a title containing a quote or a
+backtick is only a title. Cap the lengths (120 and 240 characters here); a banner that
+scrolls off the screen is not a banner.
+
+Only `reckon watch` calls this, and only when something crossed a line. A platform
+without it still gets the log, the state file and the corner window.
+
+### `openWindow(url, { width, height })` → boolean | null · **free** · OPTIONAL · **throws**
+Opens a small chromeless window through the person's own browser (`--app=`), for the
+companion in the corner of the screen. `true` when the browser was asked, `false` when it
+refused, `null` when no Chromium-family browser is installed.
+
+**It only ever opens reckon's own loopback address** (`http://127.0.0.1:<port>/…`). Any
+other URL throws `TypeError` before anything runs: this is a way to show the companion,
+not a way to open a page, and a URL that arrived from somewhere else must never reach it.
+Sizes are clamped. The window is not always-on-top; a browser cannot promise that.
+
 ### `selfProcess(pid)` → object | null · **light**
 ```js
 { pid: 8412, cpuPct: 0.28, rssKB: 47104, elapsed: '02:14:07' }
