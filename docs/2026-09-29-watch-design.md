@@ -163,7 +163,26 @@ contributes nothing.
   they work.
 - **Windows.** `notify` and `openWindow` are optional capabilities and `win32.js` does not implement
   them, so a Windows run still gets the log and the state file, and no banner or window.
-- **Always-on-top.** A browser window cannot promise it.
+- **Always-on-top.** A browser window cannot promise it. Decided on 2026-10-06 to be solved with one
+  optional native file; see "Decision: a native pet" below.
+
+## Decision: a native pet (2026-10-06)
+
+The browser window cannot sit above a full-screen app, and a companion that disappears exactly when
+someone is deep in a full-screen app is the case it was meant for. So `reckon watch --pet` (macOS
+only) draws the lantern in a small borderless panel written in Swift, `native/pet.swift`.
+
+- **Source, not a binary.** reckon compiles the file on the person's machine with `swiftc` the first
+  time, into `~/.cache/reckon`. Nothing is downloaded and nothing prebuilt is shipped.
+- **No port, no polling of its own.** The pet reads `~/.cache/reckon/watch.json`, which the watcher
+  already writes atomically. `--pet` starts no server.
+- **Lives and dies with `watch`.** It exits when its parent goes away. There is no login item and no
+  LaunchAgent: reckon still never starts by itself.
+- **Never runs the command.** Like the corner window, it shows the command as text and offers a copy
+  button, nothing else.
+- **Windows** keeps what it has: the log and the state file.
+
+CONTRIBUTING §2 records why this is the one exception to "plain Node and hand-written web files".
 
 ## Non-goals
 

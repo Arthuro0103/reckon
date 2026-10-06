@@ -28,6 +28,14 @@ purism: every dependency is something a person has to trust, and this tool asks 
 trust beyond reading its own source. If a feature seems to need a library, the answer is
 to write the smaller thing the library would have done, not to add the dependency.
 
+**One exception, decided on 2026-10-06:** a single optional native file, `native/pet.swift`,
+for the companion that stays above full-screen apps. A browser window cannot do that, and the
+file is the smallest thing that can. The rules that make it an exception and not a precedent:
+it is **one** file, it is **source** that the person's own machine compiles with `swiftc` the
+first time (no prebuilt binary is shipped), it is **optional** (everything works without it),
+it is macOS only, and `bin/check.js` lints it for the things it must never do (spawn a process,
+open a URL, reach the network, delete a file). A second native file needs its own decision here.
+
 ## 3. No network calls from the server to any third party
 
 No API keys, no telemetry, no LLM of any kind. The one standing exception is the
