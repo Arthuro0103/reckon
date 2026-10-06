@@ -13,20 +13,20 @@ If you can open a terminal and run `node -v` and see `v18` or higher, this is th
 way in:
 
 ```bash
-npx @arthuro0103/reckon
+npx @arthurparis/reckon
 ```
 
-This downloads reckon, runs it, and opens `http://127.0.0.1:4127` in your browser. Nothing
-is installed permanently — the next time you run it, `npx` fetches the current version
+This downloads reckon and starts it. It prints the address; open `http://127.0.0.1:4127` in
+your browser. Nothing is installed permanently — the next time you run it, `npx` fetches the current version
 again. There is no account, no sign-in, and no configuration required to start.
 
 To stop it, go back to the terminal and press `Ctrl+C`.
 
 ## Tier 2 — single binary (you don't have Node, and don't want it)
 
-Download the file for your operating system from the
-[releases page](https://github.com/Arthuro0103/reckon/releases) and run it. It contains a
-full copy of Node, so nothing else needs to be installed first.
+Binaries are attached to the [releases page](https://github.com/Arthuro0103/reckon/releases).
+The first release has not been published yet, so for now use Tier 1 or Tier 3. When it exists,
+the file contains a full copy of Node, so nothing else needs to be installed first.
 
 **On macOS**, the file has not been notarized by Apple — that costs money reckon's author
 doesn't spend on a free tool, and paying it wouldn't change anything the tool does. The
@@ -51,8 +51,9 @@ confirm once more.
 This is a real security prompt and it is telling you the truth: nobody has paid
 Apple to vouch for this binary. If that is not a trade you want to make, use the
 clone-and-run tier instead — it runs the same code from source you can read.
-turning the protection off — do not use System Settings to disable Gatekeeper entirely
-just to run one program.
+
+Whatever you decide, do not use System Settings to disable Gatekeeper entirely just to run
+one program: that turns the protection off for every program on the machine.
 
 **On Windows**, expect Microsoft Defender SmartScreen to show "Windows protected your PC"
 because the binary isn't signed with a certificate SmartScreen recognizes yet — the same
@@ -94,11 +95,12 @@ guess, copy `reckon.config.example.json` to `reckon.config.json` in the project 
 ## What installing this does *not* do
 
 No tier creates an account, phones home, or asks for a network permission beyond the
-loopback address the page itself opens. Uninstalling is deleting the binary, the cloned
-npx keeps its downloads in a cache folder. To clear it, delete the folder
-directly — `~/.npm/_npx` on macOS and Linux, `%LOCALAPPDATA%
-pm-cache\_npx` on
-Windows. An earlier draft of this page told you to run a third-party package to
-do it, two paragraphs after promising nothing here runs unaudited code. Deleting
-a folder yourself needs no such trust.
+loopback address the page itself opens.
+
+Uninstalling is deleting the binary or the cloned folder, and then reckon's own cache:
 `rm -rf ~/.cache/reckon` (macOS) or the equivalent folder on Windows.
+
+`npx` keeps its downloads in a cache folder of its own. To clear it, delete the folder
+directly: `~/.npm/_npx` on macOS and Linux, `%LOCALAPPDATA%\npm-cache\_npx` on Windows.
+Deleting a folder yourself needs no extra trust, so this page does not ask you to run a
+third-party package to do it.
