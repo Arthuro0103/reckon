@@ -23,5 +23,9 @@ build/.cache/
 build/.gen/
 build/dist/
 
-# Saida do `reckon report`: descreve a maquina de quem rodou e nunca pertence a um commit.
+# Output of `reckon report`: it describes the machine of whoever ran it and never belongs in a commit.
 reckon-report.txt
+
+# Local session briefs written by developer tooling. They describe one machine and one afternoon,
+# so they never belong in a public commit.
+.pgdk/
