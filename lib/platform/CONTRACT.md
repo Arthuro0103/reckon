@@ -169,6 +169,23 @@ other URL throws `TypeError` before anything runs: this is a way to show the com
 not a way to open a page, and a URL that arrived from somewhere else must never reach it.
 Sizes are clamped. The window is not always-on-top; a browser cannot promise that.
 
+### `startPet({ cacheDir, log, onExit })` → `{ pid, stop() }` | null · **free** · OPTIONAL
+Shows the companion as a small native panel that stays above every window, full-screen apps
+included, which a browser window cannot do. On macOS it compiles one source file
+(`native/pet.swift`) with the machine's own `swiftc` the first time, into `cacheDir`, and runs it
+as a child process. The pet reads `watch.json` itself: it gets no port and no data from this call.
+
+`null` means it did not start, and `log(message)` says why in one honest line (no Command Line
+Tools, no compiler, a compile error). It **never starts the installation of the Command Line
+Tools**: without them the `swiftc` on the PATH is a stub that opens an install dialog, so the
+tools are checked with `xcode-select -p` first. It compiles again only when the source, the
+compiler version, the macOS version or the architecture changed.
+
+The child is started without a shell and its stdin stays open; that open pipe is how the pet
+knows the watcher is alive, and when it closes, however the watcher ended, the pet leaves.
+`stop()` closes it. Only `reckon watch --pet` calls this. A platform without it still gets the
+log, the state file and the corner window.
+
 ### `selfProcess(pid)` → object | null · **light**
 ```js
 { pid: 8412, cpuPct: 0.28, rssKB: 47104, elapsed: '02:14:07' }

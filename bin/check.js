@@ -1282,6 +1282,57 @@ async function cornerIsSafe() {
     else fail('the corner server refused its own Host');
   }
 
+  // --pet: the native lantern. Started once, never through the browser, and its cost is stated.
+  {
+    const alone = w.parse(['--pet']), both = w.parse(['--pet', '--corner']), none = w.parse([]);
+    if (alone.pet && !alone.bad && !none.pet) ok('--pet is its own flag and is off by default');
+    else fail('--pet is not parsed as a flag of its own');
+    if (both.bad) ok('--pet and --corner together are refused, so two lanterns cannot appear');
+    else fail('--pet and --corner were both accepted');
+
+    const platform = require(path.join(ROOT, 'lib/platform'));
+    const realStart = platform.startPet, realOpen = platform.openWindow, realId = platform.id;
+    let starts = 0, opens = 0, said = [], exitCb = null, stopped = 0;
+    platform.openWindow = async () => { opens++; return true; };
+    platform.startPet = async (o) => { starts++; exitCb = o.onExit; return { pid: 4242, stop: () => { stopped++; } }; };
+    try {
+      const ctx = { pet: true, petPid: null };
+      platform.id = 'darwin';
+      const h = await w.startPetFor(ctx, (m) => said.push(m));
+      if (starts === 1 && h && ctx.petPid === 4242) ok('startPetFor starts the pet exactly once and remembers its pid');
+      else fail('startPetFor did not start the pet once', String(starts));
+      if (opens === 0) ok('the pet never goes through the browser window');
+      else fail('--pet opened a browser window');
+      exitCb(0, null);
+      if (ctx.petPid === null && said.some((m) => /does not come back/.test(m))) ok('when the person closes the pet it is not restarted, and the log says so');
+      else fail('a closed pet was not reported or was restarted', said.join(' | '));
+
+      platform.startPet = async (o) => { o.log('no compiler'); return null; };
+      said = [];
+      const none2 = await w.startPetFor({ pet: true, petPid: null }, (m) => said.push(m));
+      if (none2 === null && said.some((m) => /not started/.test(m))) ok('a pet that cannot start says so and the rest keeps working');
+      else fail('a failed pet start was silent');
+
+      platform.id = 'win32'; starts = 0; platform.startPet = async () => { starts++; return null; }; said = [];
+      await w.startPetFor({ pet: true, petPid: null }, (m) => said.push(m));
+      if (starts === 0 && said.some((m) => /macOS only/.test(m))) ok('on another system it says the native pet is macOS only, and does not try');
+      else fail('a non-mac system tried to start the pet or said nothing');
+    } finally { platform.startPet = realStart; platform.openWindow = realOpen; platform.id = realId; }
+
+    // The build key: anything that makes an old binary untrustworthy must change it.
+    const { petKey } = require(path.join(ROOT, 'lib/platform/darwin-pet.js'));
+    const base = { source: 'a', swiftVersion: 'v1', macos: '26.0', arch: 'arm64' };
+    const keys = new Set([petKey(base), petKey({ ...base, source: 'b' }), petKey({ ...base, swiftVersion: 'v2' }), petKey({ ...base, macos: '26.1' }), petKey({ ...base, arch: 'x64' })]);
+    if (keys.size === 5 && petKey(base) === petKey({ ...base })) ok('the pet is rebuilt when the source, the compiler, the macOS or the architecture changes, and not otherwise');
+    else fail('the pet build key misses a change that should force a rebuild');
+
+    const dp = read('lib/platform/darwin-pet.js');
+    if (/spawn\(bin, \[\], \{ stdio: \['pipe', 'ignore', 'pipe'\] \}\)/.test(dp) && !/shell\s*:\s*true|\bexec\(|execSync/.test(dp)) ok('the pet is started without a shell, with its stdin held open');
+    else fail('the pet is not started the way the contract says');
+    if (/xcode-select', \['-p'\]/.test(dp) && !/xcode-select', \['--install'/.test(dp)) ok('it checks for the Command Line Tools without ever starting their installation');
+    else fail('startPet does not check the Command Line Tools first, or starts their installation');
+  }
+
   // The window opens once when things turn bad, and again only after a real calm.
   const platform = require(path.join(ROOT, 'lib/platform'));
   const real = platform.openWindow;
