@@ -1,17 +1,45 @@
 {
-  "name": "@arthuro0103/reckon",
+  "name": "@arthurparis/reckon",
   "version": "0.1.0",
-  "description": "A local dashboard that tells you what to do about your Mac's disk and memory — and never deletes anything itself.",
+  "description": "A local dashboard that tells you what to do about your computer's disk and memory — and never deletes anything itself.",
   "license": "MIT",
   "private": false,
-  "bin": { "reckon": "./bin/reckon" },
+  "bin": {
+    "reckon": "bin/reckon"
+  },
+  "files": [
+    "bin/",
+    "lib/",
+    "web/",
+    "build/build-sea.js",
+    "server.js",
+    "reckon.config.example.json",
+    "docs/INSTALL.md",
+    "docs/PRIVACY.md",
+    "LICENSE",
+    "README.md"
+  ],
   "scripts": {
     "start": "node server.js",
     "scan": "node bin/scan.js",
     "watch": "node bin/reckon watch",
     "test": "node bin/check.js"
   },
-  "keywords": ["macos", "disk-space", "docker", "dashboard", "cleanup", "local-first", "no-dependencies"],
-  "engines": { "node": ">=18" },
-  "repository": { "type": "git", "url": "https://github.com/Arthuro0103/reckon.git" }
+  "keywords": [
+    "macos",
+    "windows",
+    "disk-space",
+    "docker",
+    "dashboard",
+    "cleanup",
+    "local-first",
+    "no-dependencies"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Arthuro0103/reckon.git"
+  }
 }
