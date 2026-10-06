@@ -83,10 +83,10 @@ The repo carries step-by-step skills for agents that have a shell, so you can sa
 | `/reckon-scan` | runs the deep scan and explains each item with its proof |
 | `/reckon-panel` | starts the dashboard and gives you the address |
 | `/reckon-slow` | finds out why the machine feels slow, from a measurement |
-| `/reckon-watch` | one reading, or the watcher on and off (only when you ask by name) |
+| `/reckon-watch` | one reading, or the watcher on and off (only when you ask by name; `--corner` and `--pet` only when you ask for them) |
 | `/reckon-report` | writes the diagnostic file for you to read before you share it |
 
-Other agents (Cursor, Codex, Gemini CLI) can read [AGENTS.md](AGENTS.md), which holds the same rules in 34 lines. Every skill carries one rule above the rest: **the agent never runs a command that reckon prints.** It shows it to you, and you run it. A test in `bin/check.js` refuses a skill that could be read as permission to do otherwise.
+Other agents (Cursor, Codex, Gemini CLI) can read [AGENTS.md](AGENTS.md), which holds the same rules in 35 lines. Every skill carries one rule above the rest: **the agent never runs a command that reckon prints.** It shows it to you, and you run it. A test in `bin/check.js` refuses a skill that could be read as permission to do otherwise.
 
 The skills live in the repo, not in the npm package, so they work from a clone, not from `npx`.
 
@@ -155,7 +155,9 @@ a native macOS notification; if you never see one, check System Settings > Notif
 The **corner window** is the lantern from `/pet`, fed with the real number. It opens when things turn
 bad, closes by itself when they calm, shows the command as text with a copy button, and is served from
 the watcher itself on `127.0.0.1:4128`. The page in it asks the watcher for its numbers every three
-seconds; that is the one place this project polls, and it exists only if you asked for `--corner`. It is
+seconds; that is the one place this project polls, and it exists only if you asked for `--corner`. The
+server refuses any request whose `Host` header is not `127.0.0.1:4128`, which is what a page using DNS
+rebinding would send under its own name; a test in `bin/check.js` checks that. It is
 a browser window, so it is not always on top. For that there is `--pet`, below; without it, over a
 full-screen app, the banner is what reaches you.
 
@@ -335,7 +337,10 @@ The one rule: **nothing in this repository may delete, move or overwrite anythin
 `~/.cache/reckon/`.** A pull request that adds an execute button will be declined, however
 convenient it looks.
 
-`node bin/check.js` has to pass. It exists because adding accents to this project's copy once
+`node bin/check.js` has to pass. CI runs it on Linux with Node 18, 20 and 22, and on macOS 15 with
+Node 22, where it also compiles `native/pet.swift` and compares its drawing numbers with the browser
+lantern's (all four jobs passed on 2026-10-06, commit `0a02971`). Where there is no Mac with a Swift
+compiler, the suite says in one line that it did not run them. It exists because adding accents to this project's copy once
 silently corrupted six names that are contracts — a require path, a tab id, an API key, a query
 parameter — and `node --check` passed on every one of them. The worst produced
 `networksetup -setdnsservers null`, which does not show a wrong number: it takes the internet
