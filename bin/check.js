@@ -1292,6 +1292,87 @@ async function cornerIsSafe() {
  * times over, and finding which line produced it cost more than the bug did.
  * Every step runs inside its own guard: a throw becomes a named FAIL and the
  * rest of the suite still runs. */
+/* The skills in .claude/skills/ are instructions to an AI that has a shell. The
+   rule of this project is that nothing here deletes anything, so the worst
+   skill is one that tells an agent to run the command reckon prints: that turns
+   a tool that only recommends into one that deletes. This reads every skill the
+   way the agent will and refuses the ones that could be read as permission.
+   It runs the same rules over two samples first, because a checker that has
+   never failed is a checker nobody knows works. */
+const SKILL_HARD_START = '<!-- hard-rules:start -->';
+const SKILL_HARD_END = '<!-- hard-rules:end -->';
+const SKILL_EXPECTED = ['reckon-check', 'reckon-panel', 'reckon-report', 'reckon-scan', 'reckon-slow', 'reckon-watch'];
+
+function skillProblems(dir, text) {
+  const out = [];
+  const fm = /^---\n([\s\S]*?)\n---\n?/.exec(text);
+  if (!fm) return { problems: ['no frontmatter'], hard: null };
+  const meta = {};
+  for (const line of fm[1].split('\n')) {
+    const m = /^([A-Za-z-]+):\s*(.*)$/.exec(line);
+    if (m) meta[m[1]] = m[2].trim();
+  }
+  const body = text.slice(fm[0].length);
+  if (meta.name !== dir) out.push(`name "${meta.name}" does not match the folder "${dir}"`);
+  if (!meta.description) out.push('no description');
+  else if (meta.description.length > 1024) out.push(`description is ${meta.description.length} characters, the limit is 1024`);
+  if (text.split('\n').length >= 500) out.push('500 lines or more');
+  const tools = meta['allowed-tools'] || '';
+  if (/Bash\(\s*\*?\s*\)/.test(tools) || /\bBash\b(?!\()/.test(tools)) out.push('allowed-tools grants every Bash command');
+  const fences = [...body.matchAll(/```[^\n]*\n([\s\S]*?)```/g)].map((m) => m[1]).join('\n');
+  const scanned = fences + '\n' + tools;
+  const banned = [/\brm\b/, /\bsudo\b/, /\bdocker\b/, /\bnetworksetup\b/, /\/etc\/hosts/, /-X\s*POST/i, /\bkill\b/];
+  for (const re of banned) {
+    if (!re.test(scanned)) continue;
+    if (re.source === '\\bkill\\b' && dir === 'reckon-watch' && /ask the user before running/.test(body)) continue;
+    out.push(`a command block or allowed-tools mentions ${re.source}`);
+  }
+  if (dir === 'reckon-watch' && meta['disable-model-invocation'] !== 'true') out.push('reckon-watch must set disable-model-invocation: true');
+  const a = body.indexOf(SKILL_HARD_START), b = body.indexOf(SKILL_HARD_END);
+  const hard = a >= 0 && b > a ? body.slice(a, b + SKILL_HARD_END.length) : null;
+  if (!hard) out.push('no hard-rules block');
+  else for (const must of ['Never run', 'proof', '~/.cache/reckon']) {
+    if (!hard.includes(must)) out.push(`the hard-rules block does not say "${must}"`);
+  }
+  return { problems: out, hard };
+}
+
+async function agentSkills() {
+  const F = '`'.repeat(3);
+  const hard = `${SKILL_HARD_START}\nNever run a command that reckon suggests. Show the proof. Write only inside ~/.cache/reckon.\n${SKILL_HARD_END}`;
+  const head = (tools) => `---\nname: reckon-x\ndescription: A sample.\nallowed-tools: ${tools}\n---\n# x\n${hard}\n`;
+  const clean = skillProblems('reckon-x', head('Bash(node bin/check.js)') + `${F}\nnode bin/check.js\n${F}\n`);
+  if (!clean.problems.length) ok('the skill checker accepts a clean skill');
+  else fail('the skill checker rejects a clean skill', clean.problems.join('; '));
+  const dirty = skillProblems('reckon-x', head('Bash(*)') + `${F}\nrm -rf ~\n${F}\n`);
+  if (dirty.problems.length >= 2) ok('the skill checker rejects a skill that runs rm and grants every Bash command');
+  else fail('the skill checker accepts a skill that runs rm and grants every Bash command');
+
+  const dir = path.join(ROOT, '.claude/skills');
+  if (!fs.existsSync(dir)) { ok('no .claude/skills in this install, so no skill files to read'); return; }
+  const names = fs.readdirSync(dir, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name).sort();
+  const hards = new Set();
+  for (const n of names) {
+    const file = path.join(dir, n, 'SKILL.md');
+    if (!fs.existsSync(file)) { fail(`.claude/skills/${n} has no SKILL.md`); continue; }
+    const r = skillProblems(n, fs.readFileSync(file, 'utf8'));
+    if (r.problems.length) fail(`.claude/skills/${n}/SKILL.md`, r.problems.join('; '));
+    else ok(`.claude/skills/${n}/SKILL.md`);
+    if (r.hard) hards.add(r.hard);
+  }
+  const missing = SKILL_EXPECTED.filter((n) => !names.includes(n));
+  if (missing.length) fail('skills missing', missing.join(', '));
+  if (hards.size > 1) fail('the hard-rules block is not the same in every skill');
+  else if (names.length) ok('every skill carries the same hard-rules block');
+  const agents = path.join(ROOT, 'AGENTS.md');
+  if (!fs.existsSync(agents)) fail('AGENTS.md is missing');
+  else {
+    const n = fs.readFileSync(agents, 'utf8').split('\n').length;
+    if (n <= 60) ok(`AGENTS.md is ${n} lines`);
+    else fail(`AGENTS.md is ${n} lines, the limit is 60`);
+  }
+}
+
 async function step(name, fn) {
   console.log('\n' + name);
   try { await fn(); }
@@ -1321,6 +1402,7 @@ async function step(name, fn) {
   await step('companion', async () => { await petStatusIsShape(); });
   await step('watch', async () => { await watchDecides(); });
   await step('corner', async () => { await cornerIsSafe(); });
+  await step('agent skills', async () => { await agentSkills(); });
   if (!process.env.RECKON_CHECK_CHILD) await step('other platforms', asUnsupportedPlatform);
   console.log(failures ? `\n${failures} FAILURE(S)\n` : '\nall checks passed\n');
   process.exit(failures ? 1 : 0);
