@@ -1454,6 +1454,104 @@ async function agentSkills() {
   }
 }
 
+// ---------------------------------------------------------------------------
+// The native pet: ONE Swift file (native/pet.swift), the single exception to "plain Node and
+// hand-written web files" (CONTRIBUTING.md section 2). A file nobody builds in the suite is a
+// file that rots, and a second drawing of the lantern is a second place for it to be wrong, so:
+//   1. it is linted for what it must never do and for what it must do to stay above full-screen apps,
+//      and the linter is run against bad copies first, because a linter that cannot fail proves nothing
+//   2. the static paths and the colours are the SAME strings as web/pet.js and web/tokens.css
+//   3. on a Mac with swiftc it is compiled (which typechecks it) and `--dump-pose` is compared with
+//      pose() in web/pet.js at all 101 levels
+// ---------------------------------------------------------------------------
+const SWIFT_FORBIDDEN = [
+  [/Process\(/, 'starts a process'], [/NSTask/, 'starts a process'], [/posix_spawn/, 'starts a process'], [/\bsystem\(/, 'runs a shell command'],
+  [/NSAppleScript/, 'runs a script'], [/NSWorkspace[^\n]*\bopen/, 'opens something'], [/removeItem/, 'deletes a file'],
+  [/dlopen/, 'loads code'], [/http/i, 'names an address, and the pet reaches for none'],
+];
+const SWIFT_REQUIRED = [
+  ['.screenSaver', 'the window level that stays above full-screen apps'], ['canJoinAllSpaces', 'being on every Space'],
+  ['fullScreenAuxiliary', 'sitting beside a full-screen app'], ['nonactivatingPanel', 'not stealing focus'],
+  ['standardInput', 'the open stdin that tells it the watcher is alive'],
+];
+function lintSwift(src) {
+  const bad = [];
+  for (const [re, why] of SWIFT_FORBIDDEN) if (re.test(src)) bad.push(`forbidden (${why}): ${re}`);
+  for (const [word, why] of SWIFT_REQUIRED) if (!src.includes(word)) bad.push(`missing ${word} (${why})`);
+  // The only thing it may write is inside the cache folder.
+  for (const m of src.matchAll(/\.write\(to:\s*([^,)]+)/g)) if (!/^CACHE\b/.test(m[1].trim())) bad.push(`writes outside the cache folder: ${m[1].trim().slice(0, 40)}`);
+  return bad;
+}
+
+async function nativePet() {
+  const swift = read('native/pet.swift');
+  const js = read('web/pet.js');
+
+  const bad = lintSwift(swift);
+  if (!bad.length) ok('native/pet.swift does nothing it must never do, and has what keeps it above full-screen apps');
+  else fail('native/pet.swift breaks a rule of the native pet', bad.join('; '));
+  const samples = [
+    swift + '\nlet p = Process()', swift + '\nlet u = "https://example.com"', swift + '\nlet n = NSAppleScript(source: "")',
+    swift + '\ntry FileManager.default.removeItem(at: x)', swift + '\ntry d.write(to: URL(fileURLWithPath: "/tmp/x"))',
+    swift.replace('.screenSaver', '.floating'), swift.replace('standardInput', 'x'),
+  ];
+  const missed = samples.filter((t) => !lintSwift(t).length).length;
+  if (!missed) ok(`the Swift linter rejects all ${samples.length} bad copies it was shown`);
+  else fail('the Swift linter let a bad copy through', `${missed} of ${samples.length}`);
+
+  // The static paths: every literal path in the lantern's drawing must also be in the Swift file, unchanged.
+  const lantern = js.slice(js.indexOf('function lantern('), js.indexOf('// The motion.'));
+  const paths = [...lantern.matchAll(/'(M[0-9. QLHVZ-]+)'/g)].map((m) => m[1]);
+  const lost = paths.filter((d) => !swift.includes(`"${d}"`));
+  if (paths.length >= 4 && !lost.length) ok(`the ${paths.length} fixed paths of the lantern are the same strings in the Swift file`);
+  else fail('a fixed path of the lantern is not the same in native/pet.swift', lost.join(' | ') || `only ${paths.length} found in web/pet.js`);
+
+  // The colours: same hex as web/tokens.css.
+  const css = read('web/tokens.css');
+  const token = (n) => (css.match(new RegExp(`--${n}:\\s*#([0-9a-fA-F]{6})\\b`)) || [])[1];
+  const pairs = { cBg2: 'bg2', cBg3: 'bg3', cInk: 'ink', cInk2: 'ink2', cInk3: 'ink3', cLine2: 'line2', cCyan: 'cyan', cS4: 's4', cS2: 's2' };
+  const off = [];
+  for (const [name, tok] of Object.entries(pairs)) {
+    const m = swift.match(new RegExp(`\\b${name} = hex\\(0x([0-9a-fA-F]{6})\\)`));
+    if (!m || !token(tok) || m[1].toLowerCase() !== token(tok).toLowerCase()) off.push(`${name} vs --${tok}`);
+  }
+  if (!off.length) ok(`the ${Object.keys(pairs).length} colours of the Swift file are the colours of web/tokens.css`);
+  else fail('a colour in native/pet.swift is not the one in web/tokens.css', off.join(', '));
+
+  // Compile and compare. Skipped, and said so, where there is no Mac with a compiler; and in the child run
+  // that re-checks the suite on another platform, where it would only repeat the same compile.
+  const { spawnSync } = require('node:child_process');
+  const os = require('node:os');
+  const tools = process.platform === 'darwin' && !process.env.RECKON_CHECK_CHILD && spawnSync('xcode-select', ['-p']).status === 0;
+  if (!tools) { ok('(compile and pose comparison not run here: needs a Mac with the Command Line Tools)'); return; }
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'reckon-pet-check-'));
+  const bin = path.join(dir, 'reckon-pet');
+  const modules = path.join(os.tmpdir(), 'reckon-check-swift-modules');   // survives between runs; outside the person's cache
+  const built = spawnSync('swiftc', ['-O', '-module-cache-path', modules, path.join(ROOT, 'native/pet.swift'), '-o', bin], { encoding: 'utf8', timeout: 300000 });
+  if (built.status !== 0) { fail('native/pet.swift does not compile', String(built.stderr || built.error).split('\n').slice(0, 3).join(' | ')); return; }
+  ok('native/pet.swift compiles, so it typechecks');
+
+  const dump = spawnSync(bin, ['--dump-pose'], { encoding: 'utf8', timeout: 20000 });
+  let theirs;
+  try { theirs = JSON.parse(dump.stdout); } catch { fail('--dump-pose did not print JSON', String(dump.stdout).slice(0, 80)); return; }
+  const pet = require(path.join(ROOT, 'web/pet.js'));
+  const off2 = [];
+  let worst = 0;
+  for (let i = 0; i <= 100; i++) {
+    const a = pet.pose(i / 100), b = theirs[i] || {};
+    if (Object.keys(a).sort().join() !== Object.keys(b).sort().join()) { off2.push(`${i}: different keys`); break; }
+    for (const k of Object.keys(a)) {
+      if (k === 'glow') { if (a[k] !== b[k]) off2.push(`${i} glow ${a[k]} vs ${b[k]}`); continue; }
+      const d = Math.abs(a[k] - b[k]);
+      worst = Math.max(worst, d);
+      if (!(d <= 1e-3)) off2.push(`${i} ${k} ${a[k]} vs ${b[k]}`);
+    }
+  }
+  if (theirs.length === 101 && !off2.length) ok(`pose() in the Swift file matches web/pet.js at all 101 levels (worst difference ${worst})`);
+  else fail('the Swift pose and web/pet.js pose disagree', off2.slice(0, 3).join(' | ') || `${theirs.length} levels`);
+  fs.rmSync(dir, { recursive: true, force: true });
+}
+
 async function step(name, fn) {
   console.log('\n' + name);
   try { await fn(); }
@@ -1481,6 +1579,7 @@ async function step(name, fn) {
   await step('packaging', async () => { await packagedBundle(); });
   await step('safety', async () => { await safety(); await noHardcodedPaths(); });
   await step('companion', async () => { await petStatusIsShape(); });
+  await step('native pet', async () => { await nativePet(); });
   await step('watch', async () => { await watchDecides(); });
   await step('corner', async () => { await cornerIsSafe(); });
   await step('agent skills', async () => { await agentSkills(); });

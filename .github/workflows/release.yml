@@ -29,6 +29,25 @@ jobs:
       # `npm ci` here would quietly stop that from being true.
       - run: node bin/check.js
 
+  # The native pet is one Swift file, and Linux cannot compile it. This leg runs the same suite on
+  # a Mac, where bin/check.js compiles native/pet.swift and compares its pose() with web/pet.js at
+  # all 101 levels. The runner image is pinned on purpose: a floating `macos-latest` would change
+  # the compiler under the check without a commit to blame.
+  check-macos:
+    name: check (macOS, native pet)
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: node bin/check.js
+      - name: Typecheck the pet and print its pose
+        run: |
+          swiftc -typecheck native/pet.swift
+          swiftc -O native/pet.swift -o "$RUNNER_TEMP/reckon-pet"
+          "$RUNNER_TEMP/reckon-pet" --dump-pose | head -c 300; echo
+
   # ONE job builds all three binaries.
   #
   # Injecting a SEA blob is file manipulation, not execution: the target binary
@@ -42,7 +61,7 @@ jobs:
   # Mach-O will not launch on Apple Silicon at all.
   build:
     name: build all targets
-    needs: check
+    needs: [check, check-macos]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: macos-14
     steps:
