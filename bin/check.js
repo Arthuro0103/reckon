@@ -1252,6 +1252,24 @@ async function cornerIsSafe() {
   if (/server\.listen\(CORNER_PORT, '127\.0\.0\.1'/.test(src) && /remoteAddress/.test(src) && /local only/.test(src)) ok('the corner server listens on 127.0.0.1 only and refuses other callers');
   else fail('the corner server is not loopback-only');
 
+  // Loopback is not enough: a page on another site can resolve its own name to 127.0.0.1.
+  // The handler is driven directly (no port: the owner may already have one running).
+  {
+    const call = (host, url) => {
+      const out = { status: null };
+      const req = { socket: { remoteAddress: '127.0.0.1' }, headers: host == null ? {} : { host }, url };
+      const res = { writeHead: (c) => { out.status = c; }, end: () => {} };
+      w.cornerHandler({ snapshot: null })(req, res);
+      return out.status;
+    };
+    const mine = `127.0.0.1:${w.CORNER_PORT}`;
+    const refused = ['evil.example.com', `evil.example.com:${w.CORNER_PORT}`, `localhost:${w.CORNER_PORT}`, '127.0.0.1', null].map((h) => call(h, '/api/watch'));
+    if (refused.every((c) => c === 403)) ok('the corner server answers only to its own Host, so DNS rebinding reads nothing');
+    else fail('the corner server answered to a Host that is not its own', refused.join(','));
+    if (call(mine, '/api/watch') === 200) ok('the corner server still answers to its own Host');
+    else fail('the corner server refused its own Host');
+  }
+
   // The window opens once when things turn bad, and again only after a real calm.
   const platform = require(path.join(ROOT, 'lib/platform'));
   const real = platform.openWindow;
