@@ -177,10 +177,14 @@ downloaded, and everything else works without it.
   101 levels.
 
 Measured on one Mac on 2026-10-06 (Swift 6.3.3, macOS 26): the first compile took 29.6 s with a cold
-module cache, and starting it afterwards 118 ms; with the lantern at full strain it held about 12 MB
-and 0.0% CPU in `top`, a figure that leaves out the drawing, which the window server does. It was seen
-above a full-screen app on that Mac. Not tried: Stage Manager, a second display, a game in exclusive
-full screen, or macOS versions other than that one. Windows keeps the log and the state file.
+module cache (2.0 s with a warm one), and starting it afterwards 118 ms. Running under `reckon watch
+--pet` it held 44 MB resident, the number the watcher records as `cost.petMB`; `top`'s memory column
+showed about 12 MB for the same process, which counts something narrower. Its CPU read 0.0% in `top`
+with the lantern at full strain, a figure that leaves out the drawing, which the window server does.
+Click, the 15-second close of the card, "Hide for 1 hour", dragging, and the pet leaving when the watcher
+is killed with `kill -9` were each tried on that Mac, and the pet was seen above a full-screen app. Not
+tried: Stage Manager, a second display, a game in exclusive full screen, or other macOS versions.
+Windows keeps the log and the state file.
 
 ---
 
