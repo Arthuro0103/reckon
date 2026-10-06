@@ -73,6 +73,23 @@ Obsidian vaults by their marker directory. To override any of it, copy
 `reckon.config.example.json` to `reckon.config.json` — that name is gitignored, so your paths
 never end up in a commit.
 
+## Using it with an AI agent
+
+The repo carries step-by-step skills for agents that have a shell, so you can say "scan my disk" or "why is my machine slow" and have an agent run the right command and read the result for you. In Claude Code, open a clone of this repo and ask, or type the name:
+
+| Skill | What it does |
+|---|---|
+| `/reckon-check` | runs the test suite and reports only what failed |
+| `/reckon-scan` | runs the deep scan and explains each item with its proof |
+| `/reckon-panel` | starts the dashboard and gives you the address |
+| `/reckon-slow` | finds out why the machine feels slow, from a measurement |
+| `/reckon-watch` | one reading, or the watcher on and off (only when you ask by name) |
+| `/reckon-report` | writes the diagnostic file for you to read before you share it |
+
+Other agents (Cursor, Codex, Gemini CLI) can read [AGENTS.md](AGENTS.md), which holds the same rules in 34 lines. Every skill carries one rule above the rest: **the agent never runs a command that reckon prints.** It shows it to you, and you run it. A test in `bin/check.js` refuses a skill that could be read as permission to do otherwise.
+
+The skills live in the repo, not in the npm package, so they work from a clone, not from `npx`.
+
 ---
 
 ## The tabs
