@@ -1,0 +1,133 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="250" viewBox="0 0 900 250"><defs></defs><style>.lab{font:700 15px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;fill:#3ddbf0;letter-spacing:1px}.note{font:400 14px -apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;fill:#9db3c1}</style><rect width="900" height="250" fill="#071520"/><svg x="60" y="26" xmlns="http://www.w3.org/2000/svg" class="pet-root pet-asleep" style="--sway:0.9deg;--swingT:4.44s;--flickT:1.64s;--pulseT:3.27s;--shake:0.50px;--shakeT:0.140s" viewBox="0 0 120 120" width="130" height="130" role="img" aria-label="reckon, resting"><style>
+.pet-root { overflow: visible }
+.pet-pop, .pet-swing, .pet-shake, .pet-flame, .pet-eyes, .pet-halo, .pet-drop, .pet-ray-l, .pet-ray-r
+  { transform-box: view-box }
+.pet-pop   { transform-origin: 60px 66px }
+.pet-swing { transform-origin: 60px 13px; animation: pet-sway 4.44s ease-in-out infinite }
+.pet-flame { transform-origin: 60px 62px; animation: pet-flicker 1.64s ease-in-out infinite alternate }
+.pet-halo  { transform-origin: 60px 66px; animation: pet-breathe-glow 3.27s ease-in-out infinite }
+.pet-eyes  { transform-origin: 60px 80px; animation: pet-blink 4.6s ease-in-out infinite }
+.pet-ray-l { animation: pet-ray-l 3.27s ease-out infinite }
+.pet-ray-r { animation: pet-ray-r 3.27s ease-out infinite }
+.pet-drop  { animation: pet-fall 1.5s ease-in infinite }
+.pet-drop2 { animation-delay: 0.75s }
+.pet-asleep .pet-swing { transform-origin: 60px 110px; animation: pet-breathe 3.8s ease-in-out infinite }
+.pet-asleep .pet-eyes { animation: none }
+.pet-strain .pet-shake { animation: pet-shake 0.140s steps(1, end) infinite }
+.pet-strain .pet-eyes { animation: none }
+.pet-wake .pet-pop { animation: pet-wake 0.6s cubic-bezier(0.3, 1.5, 0.5, 1) }
+@keyframes pet-sway { 0%, 100% { transform: rotate(calc(0.9deg * -1)) } 50% { transform: rotate(0.9deg) } }
+@keyframes pet-breathe { 0%, 100% { transform: scale(1) } 50% { transform: scale(1.025, 1.015) } }
+@keyframes pet-flicker {
+  0% { transform: scale(1, 1) skewX(0deg) }
+  50% { transform: scale(0.9, 1.14) skewX(5deg) }
+  100% { transform: scale(1.07, 0.9) skewX(-5deg) }
+}
+@keyframes pet-breathe-glow { 0%, 100% { opacity: 0.7; transform: scale(0.96) } 50% { opacity: 1; transform: scale(1.05) } }
+@keyframes pet-blink { 0%, 90%, 100% { transform: scaleY(1) } 94% { transform: scaleY(0.08) } }
+@keyframes pet-ray-l { 0% { transform: translateX(0); opacity: 1 } 100% { transform: translateX(-5px); opacity: 0.25 } }
+@keyframes pet-ray-r { 0% { transform: translateX(0); opacity: 1 } 100% { transform: translateX(5px); opacity: 0.25 } }
+@keyframes pet-fall { 0% { transform: translateY(0); opacity: 0 } 20% { opacity: 1 } 100% { transform: translateY(24px); opacity: 0 } }
+@keyframes pet-shake { 0% { transform: translate(0.50px, 0) } 50% { transform: translate(calc(0.50px * -1), calc(0.50px * 0.4)) } }
+@keyframes pet-wake { 0% { transform: scale(0.82); opacity: 0.4 } 100% { transform: scale(1); opacity: 1 } }
+@media (prefers-reduced-motion: reduce) { .pet-root * { animation: none !important } }
+</style><g class="pet-pop"><g class="pet-swing"><g class="pet-shake"><path d="M38 46 Q31 76 37 106 H83 Q89 76 82 46 Z" fill="#0b1a26"/><path d="M38 46 Q31 76 37 106 H83 Q89 76 82 46 Z" fill="none" stroke="#3ddbf0" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/><circle cx="60" cy="60" r="1.8" fill="#3ddbf0" opacity="0.45"/><path d="M34 46 L46 32 H74 L86 46 Z" fill="none" stroke="#3ddbf0" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/><circle cx="60" cy="20" r="7" fill="none" stroke="#3ddbf0" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/><path d="M60 27 V32" fill="none" stroke="#3ddbf0" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/><path d="M30 110 H90" fill="none" stroke="#3ddbf0" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/><g class="pet-eyes"><path d="M43 80 Q50 84 57 80" fill="none" stroke="#3ddbf0" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/><path d="M63 80 Q70 84 77 80" fill="none" stroke="#3ddbf0" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/></g><path d="M53 100 Q60 102.2 67 100" fill="none" stroke="#3ddbf0" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/></g></g></g></svg><text x="125" y="190" text-anchor="middle" class="lab">resting</text><svg x="260" y="26" xmlns="http://www.w3.org/2000/svg" class="pet-root" style="--sway:1.3deg;--swingT:3.64s;--flickT:1.34s;--pulseT:2.65s;--shake:0.50px;--shakeT:0.140s" viewBox="0 0 120 120" width="130" height="130" role="img" aria-label="reckon, watching"><style>
+.pet-root { overflow: visible }
+.pet-pop, .pet-swing, .pet-shake, .pet-flame, .pet-eyes, .pet-halo, .pet-drop, .pet-ray-l, .pet-ray-r
+  { transform-box: view-box }
+.pet-pop   { transform-origin: 60px 66px }
+.pet-swing { transform-origin: 60px 13px; animation: pet-sway 3.64s ease-in-out infinite }
+.pet-flame { transform-origin: 60px 62px; animation: pet-flicker 1.34s ease-in-out infinite alternate }
+.pet-halo  { transform-origin: 60px 66px; animation: pet-breathe-glow 2.65s ease-in-out infinite }
+.pet-eyes  { transform-origin: 60px 80px; animation: pet-blink 4.6s ease-in-out infinite }
+.pet-ray-l { animation: pet-ray-l 2.65s ease-out infinite }
+.pet-ray-r { animation: pet-ray-r 2.65s ease-out infinite }
+.pet-drop  { animation: pet-fall 1.5s ease-in infinite }
+.pet-drop2 { animation-delay: 0.75s }
+.pet-asleep .pet-swing { transform-origin: 60px 110px; animation: pet-breathe 3.8s ease-in-out infinite }
+.pet-asleep .pet-eyes { animation: none }
+.pet-strain .pet-shake { animation: pet-shake 0.140s steps(1, end) infinite }
+.pet-strain .pet-eyes { animation: none }
+.pet-wake .pet-pop { animation: pet-wake 0.6s cubic-bezier(0.3, 1.5, 0.5, 1) }
+@keyframes pet-sway { 0%, 100% { transform: rotate(calc(1.3deg * -1)) } 50% { transform: rotate(1.3deg) } }
+@keyframes pet-breathe { 0%, 100% { transform: scale(1) } 50% { transform: scale(1.025, 1.015) } }
+@keyframes pet-flicker {
+  0% { transform: scale(1, 1) skewX(0deg) }
+  50% { transform: scale(0.9, 1.14) skewX(5deg) }
+  100% { transform: scale(1.07, 0.9) skewX(-5deg) }
+}
+@keyframes pet-breathe-glow { 0%, 100% { opacity: 0.7; transform: scale(0.96) } 50% { opacity: 1; transform: scale(1.05) } }
+@keyframes pet-blink { 0%, 90%, 100% { transform: scaleY(1) } 94% { transform: scaleY(0.08) } }
+@keyframes pet-ray-l { 0% { transform: translateX(0); opacity: 1 } 100% { transform: translateX(-5px); opacity: 0.25 } }
+@keyframes pet-ray-r { 0% { transform: translateX(0); opacity: 1 } 100% { transform: translateX(5px); opacity: 0.25 } }
+@keyframes pet-fall { 0% { transform: translateY(0); opacity: 0 } 20% { opacity: 1 } 100% { transform: translateY(24px); opacity: 0 } }
+@keyframes pet-shake { 0% { transform: translate(0.50px, 0) } 50% { transform: translate(calc(0.50px * -1), calc(0.50px * 0.4)) } }
+@keyframes pet-wake { 0% { transform: scale(0.82); opacity: 0.4 } 100% { transform: scale(1); opacity: 1 } }
+@media (prefers-reduced-motion: reduce) { .pet-root * { animation: none !important } }
+</style><defs><radialGradient id="halo-watching-watching" cx="60" cy="66" r="52" gradientUnits="userSpaceOnUse"><stop offset="0.35" stop-color="#3ddbf0" stop-opacity="0.20"/><stop offset="1" stop-color="#3ddbf0" stop-opacity="0"/></radialGradient><radialGradient id="glass-watching-watching" cx="60" cy="66" r="34" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#3ddbf0" stop-opacity="0.56"/><stop offset="1" stop-color="#3ddbf0" stop-opacity="0.06"/></radialGradient></defs><g class="pet-pop"><circle class="pet-halo" cx="60" cy="66" r="52" fill="url(#halo-watching-watching)"/><g class="pet-swing"><g class="pet-shake"><g class="pet-ray-l"><path d="M24 54 L15.6 51" fill="none" stroke="#3ddbf0" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/><path d="M24 64 L15.6 61" fill="none" stroke="#3ddbf0" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></g><g class="pet-ray-r"><path d="M96 54 L104.4 51" fill="none" stroke="#3ddbf0" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/><path d="M96 64 L104.4 61" fill="none" stroke="#3ddbf0" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></g><path d="M38 46 Q31 76 37 106 H83 Q89 76 82 46 Z" fill="#0b1a26"/><path d="M38 46 Q31 76 37 106 H83 Q89 76 82 46 Z" fill="url(#glass-watching-watching)"/><path d="M38 46 Q31 76 37 106 H83 Q89 76 82 46 Z" fill="none" stroke="#3ddbf0" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/><g class="pet-flame"><path d="M60 54 Q64.4 59.2 60 62 Q55.6 59.2 60 54Z" fill="#3ddbf0" stroke="#3ddbf0" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" opacity="0.95"/></g><path d="M34 46 L46 32 H74 L86 46 Z" fill="none" stroke="#3ddbf0" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/><circle cx="60" cy="20" r="7" fill="none" stroke="#3ddbf0" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/><path d="M60 27 V32" fill="none" stroke="#3ddbf0" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/><path d="M30 110 H90" fill="none" stroke="#3ddbf0" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/><g class="pet-eyes"><ellipse cx="50" cy="80" rx="7" ry="9" fill="none" stroke="#3ddbf0" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/><circle cx="50" cy="81" r="3" fill="#3ddbf0"/><ellipse cx="70" cy="80" rx="7" ry="9" fill="none" stroke="#3ddbf0" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/><circle cx="70" cy="81" r="3" fill="#3ddbf0"/></g><path d="M53 100 Q60 104.4 67 100" fill="none" stroke="#3ddbf0" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/></g></g></g></svg><text x="325" y="190" text-anchor="middle" class="lab">watching</text><svg x="460" y="26" xmlns="http://www.w3.org/2000/svg" class="pet-root" style="--sway:1.8deg;--swingT:2.62s;--flickT:0.96s;--pulseT:1.85s;--shake:0.50px;--shakeT:0.140s" viewBox="0 0 120 120" width="130" height="130" role="img" aria-label="reckon, uneasy"><style>
+.pet-root { overflow: visible }
+.pet-pop, .pet-swing, .pet-shake, .pet-flame, .pet-eyes, .pet-halo, .pet-drop, .pet-ray-l, .pet-ray-r
+  { transform-box: view-box }
+.pet-pop   { transform-origin: 60px 66px }
+.pet-swing { transform-origin: 60px 13px; animation: pet-sway 2.62s ease-in-out infinite }
+.pet-flame { transform-origin: 60px 62px; animation: pet-flicker 0.96s ease-in-out infinite alternate }
+.pet-halo  { transform-origin: 60px 66px; animation: pet-breathe-glow 1.85s ease-in-out infinite }
+.pet-eyes  { transform-origin: 60px 80px; animation: pet-blink 4.6s ease-in-out infinite }
+.pet-ray-l { animation: pet-ray-l 1.85s ease-out infinite }
+.pet-ray-r { animation: pet-ray-r 1.85s ease-out infinite }
+.pet-drop  { animation: pet-fall 1.5s ease-in infinite }
+.pet-drop2 { animation-delay: 0.75s }
+.pet-asleep .pet-swing { transform-origin: 60px 110px; animation: pet-breathe 3.8s ease-in-out infinite }
+.pet-asleep .pet-eyes { animation: none }
+.pet-strain .pet-shake { animation: pet-shake 0.140s steps(1, end) infinite }
+.pet-strain .pet-eyes { animation: none }
+.pet-wake .pet-pop { animation: pet-wake 0.6s cubic-bezier(0.3, 1.5, 0.5, 1) }
+@keyframes pet-sway { 0%, 100% { transform: rotate(calc(1.8deg * -1)) } 50% { transform: rotate(1.8deg) } }
+@keyframes pet-breathe { 0%, 100% { transform: scale(1) } 50% { transform: scale(1.025, 1.015) } }
+@keyframes pet-flicker {
+  0% { transform: scale(1, 1) skewX(0deg) }
+  50% { transform: scale(0.9, 1.14) skewX(5deg) }
+  100% { transform: scale(1.07, 0.9) skewX(-5deg) }
+}
+@keyframes pet-breathe-glow { 0%, 100% { opacity: 0.7; transform: scale(0.96) } 50% { opacity: 1; transform: scale(1.05) } }
+@keyframes pet-blink { 0%, 90%, 100% { transform: scaleY(1) } 94% { transform: scaleY(0.08) } }
+@keyframes pet-ray-l { 0% { transform: translateX(0); opacity: 1 } 100% { transform: translateX(-5px); opacity: 0.25 } }
+@keyframes pet-ray-r { 0% { transform: translateX(0); opacity: 1 } 100% { transform: translateX(5px); opacity: 0.25 } }
+@keyframes pet-fall { 0% { transform: translateY(0); opacity: 0 } 20% { opacity: 1 } 100% { transform: translateY(24px); opacity: 0 } }
+@keyframes pet-shake { 0% { transform: translate(0.50px, 0) } 50% { transform: translate(calc(0.50px * -1), calc(0.50px * 0.4)) } }
+@keyframes pet-wake { 0% { transform: scale(0.82); opacity: 0.4 } 100% { transform: scale(1); opacity: 1 } }
+@media (prefers-reduced-motion: reduce) { .pet-root * { animation: none !important } }
+</style><defs><radialGradient id="halo-uneasy-uneasy" cx="60" cy="66" r="52" gradientUnits="userSpaceOnUse"><stop offset="0.35" stop-color="#ab9022" stop-opacity="0.30"/><stop offset="1" stop-color="#ab9022" stop-opacity="0"/></radialGradient><radialGradient id="glass-uneasy-uneasy" cx="60" cy="66" r="34" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#ab9022" stop-opacity="0.69"/><stop offset="1" stop-color="#ab9022" stop-opacity="0.06"/></radialGradient></defs><g class="pet-pop"><circle class="pet-halo" cx="60" cy="66" r="52" fill="url(#halo-uneasy-uneasy)"/><g class="pet-swing"><g class="pet-shake"><g class="pet-ray-l"><path d="M24 52 L13.04 49" fill="none" stroke="#ab9022" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/><path d="M24 62 L13.04 59" fill="none" stroke="#ab9022" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/><path d="M24 72 L13.04 69" fill="none" stroke="#ab9022" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></g><g class="pet-ray-r"><path d="M96 52 L106.96000000000001 49" fill="none" stroke="#ab9022" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/><path d="M96 62 L106.96000000000001 59" fill="none" stroke="#ab9022" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/><path d="M96 72 L106.96000000000001 69" fill="none" stroke="#ab9022" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></g><path d="M38 46 Q31 76 37 106 H83 Q89 76 82 46 Z" fill="#0b1a26"/><path d="M38 46 Q31 76 37 106 H83 Q89 76 82 46 Z" fill="url(#glass-uneasy-uneasy)"/><path d="M38 46 Q31 76 37 106 H83 Q89 76 82 46 Z" fill="none" stroke="#3ddbf0" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/><g class="pet-flame"><path d="M60 50.8 Q66.16 58.08 60 62 Q53.84 58.08 60 50.8Z" fill="#ab9022" stroke="#ab9022" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" opacity="0.95"/></g><path d="M34 46 L46 32 H74 L86 46 Z" fill="none" stroke="#3ddbf0" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/><circle cx="60" cy="20" r="7" fill="none" stroke="#3ddbf0" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/><path d="M60 27 V32" fill="none" stroke="#3ddbf0" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/><path d="M30 110 H90" fill="none" stroke="#3ddbf0" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/><g class="pet-eyes"><path d="M44 71.653824134902 L56 68.346175865098" fill="none" stroke="#3ddbf0" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/><path d="M64 68.346175865098 L76 71.653824134902" fill="none" stroke="#3ddbf0" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/><ellipse cx="50" cy="80" rx="7" ry="9.8" fill="none" stroke="#3ddbf0" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/><circle cx="50" cy="81" r="3" fill="#3ddbf0"/><ellipse cx="70" cy="80" rx="7" ry="9.8" fill="none" stroke="#3ddbf0" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/><circle cx="70" cy="81" r="3" fill="#3ddbf0"/></g><path d="M53 100 Q60 95.6 67 100" fill="none" stroke="#3ddbf0" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/></g></g></g></svg><text x="525" y="190" text-anchor="middle" class="lab">uneasy</text><svg x="660" y="26" xmlns="http://www.w3.org/2000/svg" class="pet-root pet-strain" style="--sway:1.0deg;--swingT:1.56s;--flickT:0.56s;--pulseT:1.02s;--shake:2.15px;--shakeT:0.088s" viewBox="0 0 120 120" width="130" height="130" role="img" aria-label="reckon, strained"><style>
+.pet-root { overflow: visible }
+.pet-pop, .pet-swing, .pet-shake, .pet-flame, .pet-eyes, .pet-halo, .pet-drop, .pet-ray-l, .pet-ray-r
+  { transform-box: view-box }
+.pet-pop   { transform-origin: 60px 66px }
+.pet-swing { transform-origin: 60px 13px; animation: pet-sway 1.56s ease-in-out infinite }
+.pet-flame { transform-origin: 60px 62px; animation: pet-flicker 0.56s ease-in-out infinite alternate }
+.pet-halo  { transform-origin: 60px 66px; animation: pet-breathe-glow 1.02s ease-in-out infinite }
+.pet-eyes  { transform-origin: 60px 80px; animation: pet-blink 4.6s ease-in-out infinite }
+.pet-ray-l { animation: pet-ray-l 1.02s ease-out infinite }
+.pet-ray-r { animation: pet-ray-r 1.02s ease-out infinite }
+.pet-drop  { animation: pet-fall 1.5s ease-in infinite }
+.pet-drop2 { animation-delay: 0.75s }
+.pet-asleep .pet-swing { transform-origin: 60px 110px; animation: pet-breathe 3.8s ease-in-out infinite }
+.pet-asleep .pet-eyes { animation: none }
+.pet-strain .pet-shake { animation: pet-shake 0.088s steps(1, end) infinite }
+.pet-strain .pet-eyes { animation: none }
+.pet-wake .pet-pop { animation: pet-wake 0.6s cubic-bezier(0.3, 1.5, 0.5, 1) }
+@keyframes pet-sway { 0%, 100% { transform: rotate(calc(1.0deg * -1)) } 50% { transform: rotate(1.0deg) } }
+@keyframes pet-breathe { 0%, 100% { transform: scale(1) } 50% { transform: scale(1.025, 1.015) } }
+@keyframes pet-flicker {
+  0% { transform: scale(1, 1) skewX(0deg) }
+  50% { transform: scale(0.9, 1.14) skewX(5deg) }
+  100% { transform: scale(1.07, 0.9) skewX(-5deg) }
+}
+@keyframes pet-breathe-glow { 0%, 100% { opacity: 0.7; transform: scale(0.96) } 50% { opacity: 1; transform: scale(1.05) } }
+@keyframes pet-blink { 0%, 90%, 100% { transform: scaleY(1) } 94% { transform: scaleY(0.08) } }
+@keyframes pet-ray-l { 0% { transform: translateX(0); opacity: 1 } 100% { transform: translateX(-5px); opacity: 0.25 } }
+@keyframes pet-ray-r { 0% { transform: translateX(0); opacity: 1 } 100% { transform: translateX(5px); opacity: 0.25 } }
+@keyframes pet-fall { 0% { transform: translateY(0); opacity: 0 } 20% { opacity: 1 } 100% { transform: translateY(24px); opacity: 0 } }
+@keyframes pet-shake { 0% { transform: translate(2.15px, 0) } 50% { transform: translate(calc(2.15px * -1), calc(2.15px * 0.4)) } }
+@keyframes pet-wake { 0% { transform: scale(0.82); opacity: 0.4 } 100% { transform: scale(1); opacity: 1 } }
+@media (prefers-reduced-motion: reduce) { .pet-root * { animation: none !important } }
+</style><defs><radialGradient id="halo-strained-strained" cx="60" cy="66" r="52" gradientUnits="userSpaceOnUse"><stop offset="0.35" stop-color="#d59f74" stop-opacity="0.57"/><stop offset="1" stop-color="#d59f74" stop-opacity="0"/></radialGradient><radialGradient id="glass-strained-strained" cx="60" cy="66" r="34" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#d59f74" stop-opacity="0.90"/><stop offset="1" stop-color="#d59f74" stop-opacity="0.06"/></radialGradient></defs><g class="pet-pop"><circle class="pet-halo" cx="60" cy="66" r="52" fill="url(#halo-strained-strained)"/><g class="pet-swing"><g class="pet-shake"><g class="pet-ray-l"><path d="M24 46 L7.400000000000002 43" fill="none" stroke="#d59f74" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/><path d="M24 54.5 L7.400000000000002 51.5" fill="none" stroke="#d59f74" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/><path d="M24 63 L7.400000000000002 60" fill="none" stroke="#d59f74" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/><path d="M24 71.5 L7.400000000000002 68.5" fill="none" stroke="#d59f74" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/><path d="M24 80 L7.400000000000002 77" fill="none" stroke="#d59f74" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/><path d="M24 88.5 L7.400000000000002 85.5" fill="none" stroke="#d59f74" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></g><g class="pet-ray-r"><path d="M96 46 L112.6 43" fill="none" stroke="#d59f74" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/><path d="M96 54.5 L112.6 51.5" fill="none" stroke="#d59f74" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/><path d="M96 63 L112.6 60" fill="none" stroke="#d59f74" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/><path d="M96 71.5 L112.6 68.5" fill="none" stroke="#d59f74" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/><path d="M96 80 L112.6 77" fill="none" stroke="#d59f74" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/><path d="M96 88.5 L112.6 85.5" fill="none" stroke="#d59f74" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></g><path d="M38 46 Q31 76 37 106 H83 Q89 76 82 46 Z" fill="#0b1a26"/><path d="M38 46 Q31 76 37 106 H83 Q89 76 82 46 Z" fill="url(#glass-strained-strained)"/><path d="M38 46 Q31 76 37 106 H83 Q89 76 82 46 Z" fill="none" stroke="#3ddbf0" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/><g class="pet-flame"><path d="M60 47.5 Q72.325 56.925 60 62 Q47.675000000000004 56.925 60 47.5Z" fill="#d59f74" stroke="#d59f74" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" opacity="0.95"/><path d="M60 54.025 Q66.77875 59.20875 60 62 Q53.22125 59.20875 60 54.025Z" fill="#e4f0f5" stroke="none" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" opacity="0.67"/></g><path d="M34 46 L46 32 H74 L86 46 Z" fill="none" stroke="#3ddbf0" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/><circle cx="60" cy="20" r="7" fill="none" stroke="#3ddbf0" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/><path d="M60 27 V32" fill="none" stroke="#3ddbf0" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/><path d="M30 110 H90" fill="none" stroke="#3ddbf0" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/><g class="pet-eyes"><path d="M44 73 L56 67" fill="none" stroke="#3ddbf0" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/><path d="M64 67 L76 73" fill="none" stroke="#3ddbf0" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/><ellipse cx="50" cy="80" rx="7" ry="11" fill="none" stroke="#3ddbf0" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/><circle cx="50" cy="80" r="2.1000000000000005" fill="#3ddbf0"/><ellipse cx="70" cy="80" rx="7" ry="11" fill="none" stroke="#3ddbf0" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/><circle cx="70" cy="80" r="2.1000000000000005" fill="#3ddbf0"/></g><path d="M53 100 Q60 84.05 67 100" fill="none" stroke="#3ddbf0" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/><g class="pet-drop"><path d="M92 26 Q99 37 92 42 Q85 37 92 26Z" fill="none" stroke="#3ddbf0" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></g><g class="pet-drop pet-drop2"><path d="M26 26 Q33 37 26 42 Q19 37 26 26Z" fill="none" stroke="#3ddbf0" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></g></g></g></g></svg><text x="725" y="190" text-anchor="middle" class="lab">strained</text><text x="450" y="226" text-anchor="middle" class="note">Status is never a colour. The shape tells you how bad it is: eyes, brows, flame, rays.</text></svg>
