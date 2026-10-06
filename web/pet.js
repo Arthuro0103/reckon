@@ -141,6 +141,42 @@ function tide(p, id) {
 }
 
 // ---------------------------------------------------------------------------
+// POSE. The lantern as NUMBERS and nothing else: every quantity the drawing and its
+// motion depend on, derived from the one measured level. The SVG below consumes this,
+// and a native drawing of the same lantern consumes the same numbers, so the two cannot
+// drift apart without `bin/check.js` noticing. Nothing here is rounded: a consumer
+// rounds where it draws.
+//
+// `heat` is 0 at a reading of 80 and 1 at 100. The four states cover the whole scale,
+// but the last one covers the part that matters most, so it keeps changing all the way
+// up: more rays, a paler and brighter glow (heat is white, never red), a whiter flame,
+// a harder tremble.
+// ---------------------------------------------------------------------------
+function pose(input) {
+  const p = resolve(input);
+  if (!p) throw new TypeError('unknown pet state: ' + input);
+  const l = p.level;
+  const heat = Math.max(0, Math.min(1, (l - 0.8) / 0.2));
+  const lit = Math.min(1, 0.25 + l * 0.75);
+  const rays = l > 0.8 ? 4 + Math.round(heat * 3) : Math.round(l * 5);
+  // At the top it trembles instead of swinging: a wide sway caught mid-swing reads as
+  // a crooked lantern, which is exactly what the first strained drawing looked like.
+  const sway = l < 0.8 ? 0.8 + l * 1.6 : 2.08 - Math.min(1, heat * 2) * 1.08;   // 2.1 deg at 80, down to 1.0 by 90
+  return {
+    level: l, heat, lit, glow: p.glow, open: p.open, drop: p.drop, shake: p.shake,
+    brow: p.brow + heat * 8, mouth: p.mouth + heat * 3, pupil: 3 - heat * 1.2,
+    glowMix: heat * 50,                       // percent of --ink mixed into the glow
+    haloOpacity: 0.10 + l * 0.32 + heat * 0.22,
+    glassOpacity: Math.min(0.95, 0.30 + lit * 0.55 + heat * 0.10),
+    flameH: 5 + l * 10, flameW: 0.55 + heat * 0.4, coreOpacity: heat * 0.9,
+    rays, rayGap: rays > 5 ? 8.5 : 10, rayLen: 6 + l * 8 + heat * 4,
+    secondDrop: heat > 0.5 ? 1 : 0,
+    sway, swingT: 4.6 - l * 3.2, flickT: 1.7 - l * 1.2, pulseT: 3.4 - l * 2.5,
+    shakePx: 0.5 + heat * 2.2, shakeT: 0.14 - heat * 0.07,
+  };
+}
+
+// ---------------------------------------------------------------------------
 // LANTERN. A small lantern with a flame behind its face. The flame grows, the
 // glass fills with light, a halo spreads behind it, and rays leave in pairs —
 // and the light changes colour as things get worse. Asleep, it is unlit.
@@ -152,22 +188,18 @@ function tide(p, id) {
 // outline twice — that only ever shifted the body and left the roof behind.
 // ---------------------------------------------------------------------------
 function lantern(p, id) {
-  // `heat` is 0 at a reading of 80 and 1 at 100. The four states cover the whole
-  // scale, but the last one covers the part that matters most, so it keeps changing
-  // all the way up: more rays, a paler and brighter glow (heat is white, never red), a
-  // whiter flame, a harder tremble.
-  const heat = Math.max(0, Math.min(1, (p.level - 0.8) / 0.2));
-  const glow = p.glow && heat > 0 ? `color-mix(in srgb, ${p.glow}, var(--ink) ${Math.round(heat * 50)}%)` : p.glow;
+  const q = pose(p);
+  const heat = q.heat;
+  const glow = q.glow && heat > 0 ? `color-mix(in srgb, ${q.glow}, var(--ink) ${Math.round(q.glowMix)}%)` : q.glow;
   const bodyD = 'M38 46 Q31 76 37 106 H83 Q89 76 82 46 Z';
-  const lit = Math.min(1, 0.25 + p.level * 0.75);
 
   // The gradients need ids that cannot collide when several lanterns share a page.
   const defs = glow ? `<defs>` +
     `<radialGradient id="halo-${id}" cx="60" cy="66" r="52" gradientUnits="userSpaceOnUse">` +
-      `<stop offset="0.35" stop-color="${glow}" stop-opacity="${(0.10 + p.level * 0.32 + heat * 0.22).toFixed(2)}"/>` +
+      `<stop offset="0.35" stop-color="${glow}" stop-opacity="${q.haloOpacity.toFixed(2)}"/>` +
       `<stop offset="1" stop-color="${glow}" stop-opacity="0"/></radialGradient>` +
     `<radialGradient id="glass-${id}" cx="60" cy="66" r="34" gradientUnits="userSpaceOnUse">` +
-      `<stop offset="0" stop-color="${glow}" stop-opacity="${Math.min(0.95, 0.30 + lit * 0.55 + heat * 0.10).toFixed(2)}"/>` +
+      `<stop offset="0" stop-color="${glow}" stop-opacity="${q.glassOpacity.toFixed(2)}"/>` +
       `<stop offset="1" stop-color="${glow}" stop-opacity="0.06"/></radialGradient></defs>` : '';
   const halo = glow ? `<circle class="pet-halo" ${attrs({ cx: 60, cy: 66, r: 52, fill: `url(#halo-${id})` })}/>` : '';
 
@@ -177,11 +209,11 @@ function lantern(p, id) {
     `<path ${attrs({ d: bodyD })} ${line({ 'stroke-width': 5 })}/>`;
 
   // The flame sits between the roof and the eyes. Unlit, it is one small dot.
-  const h = 5 + p.level * 10;
-  const w = 0.55 + heat * 0.4;
+  const h = q.flameH;
+  const w = q.flameW;
   const flameD = (k) => `M60 ${62 - h * k} Q${60 + h * w * k} ${62 - h * 0.35 * k} 60 62 Q${60 - h * w * k} ${62 - h * 0.35 * k} 60 ${62 - h * k}Z`;
   const core = heat > 0
-    ? path(flameD(0.55), { fill: 'var(--ink)', stroke: 'none', opacity: (heat * 0.9).toFixed(2) }) : '';
+    ? path(flameD(0.55), { fill: 'var(--ink)', stroke: 'none', opacity: q.coreOpacity.toFixed(2) }) : '';
   const flame = glow
     ? `<g class="pet-flame">` + path(flameD(1), { fill: glow, stroke: glow, 'stroke-width': 2, opacity: 0.95 }) + core + `</g>`
     : `<circle ${attrs({ cx: 60, cy: 60, r: 1.8, fill: INK, opacity: 0.45 })}/>`;
@@ -190,21 +222,20 @@ function lantern(p, id) {
   const ring = `<circle ${attrs({ cx: 60, cy: 20, r: 7 })} ${line({ 'stroke-width': 4 })}/>` + path('M60 27 V32', { 'stroke-width': 4 });
   const base = path('M30 110 H90', { 'stroke-width': 6 });
 
-  const pairs = p.level > 0.8 ? 4 + Math.round(heat * 3) : Math.round(p.level * 5);
-  const gap = pairs > 5 ? 8.5 : 10;
+  const pairs = q.rays;
+  const gap = q.rayGap;
   let left = '', right = '';
   for (let i = 0; i < pairs; i++) {
     const y = 56 + i * gap - (pairs - 1) * 2;
-    const len = 6 + p.level * 8 + heat * 4;
+    const len = q.rayLen;
     left += path(`M24 ${y} L${24 - len} ${y - 3}`, { stroke: glow || INK, 'stroke-width': 3 });
     right += path(`M96 ${y} L${96 + len} ${y - 3}`, { stroke: glow || INK, 'stroke-width': 3 });
   }
   const rays = pairs ? `<g class="pet-ray-l">${left}</g><g class="pet-ray-r">${right}</g>` : '';
 
-  const q = { ...p, brow: p.brow + heat * 8, mouth: p.mouth + heat * 3, pupil: 3 - heat * 1.2 };
   const face = `<g class="pet-eyes">` + brows(50, 70, 70, q, 6) + eye(50, 80, q, 7) + eye(70, 80, q, 7) + `</g>` + mouth(60, 100, 7, q);
   const sweat = p.drop
-    ? `<g class="pet-drop">${drop(92, 26, p)}</g>` + (heat > 0.5 ? `<g class="pet-drop pet-drop2">${drop(26, 26, p)}</g>` : '') : '';
+    ? `<g class="pet-drop">${drop(92, 26, p)}</g>` + (q.secondDrop ? `<g class="pet-drop pet-drop2">${drop(26, 26, p)}</g>` : '') : '';
 
   // Outermost group pops in when the state changes; the halo is outside the swing
   // because light does not hang from the ring.
@@ -254,14 +285,10 @@ const CSS = `
 
 // Everything a state needs to move, derived from the one measured number.
 function tempo(p) {
-  const l = p.level;
-  const heat = Math.max(0, Math.min(1, (l - 0.8) / 0.2));
-  // At the top it trembles instead of swinging: a wide sway caught mid-swing reads as
-  // a crooked lantern, which is exactly what the first strained drawing looked like.
-  const sway = l < 0.8 ? 0.8 + l * 1.6 : 2.08 - Math.min(1, heat * 2) * 1.08;   // 2.1 deg at 80, down to 1.0 by 90
-  return `--sway:${sway.toFixed(1)}deg;--swingT:${(4.6 - l * 3.2).toFixed(2)}s;` +
-    `--flickT:${(1.7 - l * 1.2).toFixed(2)}s;--pulseT:${(3.4 - l * 2.5).toFixed(2)}s;` +
-    `--shake:${(0.5 + heat * 2.2).toFixed(2)}px;--shakeT:${(0.14 - heat * 0.07).toFixed(3)}s`;
+  const q = pose(p);
+  return `--sway:${q.sway.toFixed(1)}deg;--swingT:${q.swingT.toFixed(2)}s;` +
+    `--flickT:${q.flickT.toFixed(2)}s;--pulseT:${q.pulseT.toFixed(2)}s;` +
+    `--shake:${q.shakePx.toFixed(2)}px;--shakeT:${q.shakeT.toFixed(3)}s`;
 }
 
 const CONCEPTS = { lantern, tide, dial };
@@ -314,7 +341,7 @@ function mount(el, size, concept) {
   };
 }
 
-const api = { STATES, CONCEPTS: Object.keys(CONCEPTS), svg, mount, resolve, CSS };
+const api = { STATES, CONCEPTS: Object.keys(CONCEPTS), svg, mount, resolve, pose, CSS };
 if (typeof window !== 'undefined') window.reckonPet = api;
 if (typeof module !== 'undefined') module.exports = api;
 

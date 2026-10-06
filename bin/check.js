@@ -1016,6 +1016,18 @@ function petStatusIsShape() {
   if (ids.length >= 4) ok(`the companion has ${ids.length} states`);
   else fail(`the companion has ${ids.length} states`, 'resting, watching, uneasy and strained are the contract');
 
+  // pose() is the lantern as numbers, the one thing a native drawing is compared against.
+  // It must stay numbers: a string or a NaN in it would be a drawing decision hiding there.
+  const bad = [];
+  for (let i = 0; i <= 100; i++) {
+    for (const [k, v] of Object.entries(pet.pose(i / 100))) {
+      if (k === 'glow') { if (v !== null && typeof v !== 'string') bad.push(`${i}: glow`); }
+      else if (typeof v !== 'number' || !Number.isFinite(v)) bad.push(`${i}: ${k}=${v}`);
+    }
+  }
+  if (!bad.length) ok('pose() is finite numbers at all 101 levels');
+  else fail('pose() holds something that is not a number', bad[0]);
+
   const drawn = {};
   for (const concept of pet.CONCEPTS) for (const id of ids) drawn[`${concept}/${id}`] = pet.svg(id, 120, concept);
   if (pet.CONCEPTS.length >= 3) ok(`${pet.CONCEPTS.length} candidate creatures, ${Object.keys(drawn).length} drawings`);
