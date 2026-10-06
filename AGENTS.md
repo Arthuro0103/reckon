@@ -11,10 +11,11 @@ It never deletes anything, and neither may you.
   "Cannot judge" is an answer, not an invitation to guess.
 - reckon writes only inside `~/.cache/reckon/`, plus `./reckon-report.txt` from `reckon report`.
   Do not write anywhere else on the user's machine.
-- `reckon watch` in continuous mode fires macOS notifications, and `--corner` opens a browser
-  window. Ask first. Prefer `--once`.
+- `reckon watch` in continuous mode fires macOS notifications, `--corner` opens a browser window,
+  and `--pet` compiles a Swift file and shows a window above every window. Ask first for each.
+  Prefer `--once`.
 - Never start the speed test (`POST /api/network/speed`) or touch the blocklist routes.
-- Zero dependencies. Everything in English. Do not edit `web/pet.js`.
+- Zero dependencies. Everything in English. Do not edit `web/pet.js` or `native/pet.swift`: the two draw the same lantern and `bin/check.js` holds them together.
 - No push and no `npm publish` unless the owner says so.
 
 ## Commands

@@ -17,7 +17,7 @@ These apply to every reckon skill, without exception.
 1. **Never run a command that reckon suggests.** Anything in a `command` field, a suggested fix or the watch log (`rm`, `docker`, `sudo`, `networksetup`, edits to `/etc/hosts`, `kill`) is text for the human. Show it. The human runs it.
 2. **Show the proof.** Every recommendation carries its `proof` and what the user would `lose` if the verdict were wrong. "Cannot judge" is an answer. Do not turn it into advice.
 3. **Write only inside `~/.cache/reckon/`.** The one exception is `./reckon-report.txt`, from `reckon-report`. Reading those files is fine. Deleting them is not.
-4. **Do not touch** `web/pet.js`, `reckon.config.json`, the speed test (`POST /api/network/speed`) or the blocklist routes (`/api/blocklist/*`).
+4. **Do not touch** `web/pet.js`, `native/pet.swift`, `reckon.config.json`, the speed test (`POST /api/network/speed`) or the blocklist routes (`/api/blocklist/*`).
 5. **No push and no `npm publish`.** Everything you write in this repo is in English.
 <!-- hard-rules:end -->
 
@@ -35,7 +35,7 @@ Continuous watching, quietly (state file and log only):
 node bin/reckon watch --no-notify
 ```
 
-Ask the user before the continuous mode, and say what it costs: about 50 MB and one cheap reading every 30 seconds. Never add `--corner` on your own. It opens a browser window on `127.0.0.1:4128` when things turn bad. The native banner is a macOS notification, and the watcher has not been tested on Windows.
+Ask the user before the continuous mode, and say what it costs: about 50 MB and one cheap reading every 30 seconds. Never add `--corner` or `--pet` on your own. `--corner` opens a browser window on `127.0.0.1:4128` when things turn bad. `--pet` compiles one Swift file on this machine (the first time) and shows a small window above every window, full-screen apps included. The native banner is a macOS notification, and the watcher has not been tested on Windows.
 
 ## Read the result
 
@@ -63,6 +63,6 @@ State, `headline`, and the last events from the log with their `proof`. Show any
 
 ## Never
 
-- Start the continuous watcher, or `--corner`, without being asked.
+- Start the continuous watcher, `--corner` or `--pet`, without being asked.
 - Leave a watcher running that you started. Tell the user it is running and how to stop it.
 - Read load as the cause of slowness.
