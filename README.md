@@ -2,13 +2,6 @@
 
 **A local dashboard that tells you what to do about your Mac — and never deletes anything itself.**
 
-`docker system df` told me a container was using **164.9 kB**. Its log file was **10 GB**.
-
-That is not a bug in Docker. The command measures a container's *writable layer* and never
-its `-json.log`, so a container stuck in a restart loop can write gigabytes that no Docker
-command will ever show you. I only found it because I went looking inside the VM. This tool
-is what came out of that.
-
 ![The Disk tab: a treemap of every cache this tool can name, each one carrying its verdict](docs/disk.png)
 
 *The Disk tab. Area is size, colour is the verdict, and "cannot judge" is a real answer.*
