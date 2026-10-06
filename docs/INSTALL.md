@@ -92,13 +92,29 @@ again until you ask for another scan.
 Configuration is optional. reckon guesses where you keep code and notes; to override the
 guess, copy `reckon.config.example.json` to `reckon.config.json` in the project folder.
 
+## The native pet, if you want it (macOS)
+
+`reckon watch --pet` shows the lantern as a small window that stays above every window, full-screen
+apps included. It needs one thing the rest of reckon does not: a compiler. reckon builds one Swift
+file, `native/pet.swift`, on your own machine the first time you ask for the pet.
+
+- You need the Xcode Command Line Tools. If they are missing, reckon says so and does not start the
+  installation; installing them is yours to do (`xcode-select --install`), and nothing else in reckon
+  depends on it.
+- The first start compiles for about half a minute (29.6 s measured on one Mac, 2026-10-06, with a cold
+  module cache); every later start reuses the result. It compiles again only when the file, the
+  compiler, macOS or the architecture changed.
+- It lives in `~/.cache/reckon/`: the program (`reckon-pet`), a small file that remembers what it was
+  built from, the compiler's cache (`swift-modules`), and `pet.json` with the place you left it.
+- It is part of the clone and of the npm package. The single binary does not include `reckon watch` yet.
+
 ## What installing this does *not* do
 
 No tier creates an account, phones home, or asks for a network permission beyond the
 loopback address the page itself opens.
 
 Uninstalling is deleting the binary or the cloned folder, and then reckon's own cache:
-`rm -rf ~/.cache/reckon` (macOS) or the equivalent folder on Windows.
+`rm -rf ~/.cache/reckon` (macOS, which also removes the pet's program and its compiler cache) or the equivalent folder on Windows.
 
 `npx` keeps its downloads in a cache folder of its own. To clear it, delete the folder
 directly: `~/.npm/_npx` on macOS and Linux, `%LOCALAPPDATA%\npm-cache\_npx` on Windows.

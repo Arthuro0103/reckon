@@ -131,6 +131,7 @@ nobody has the panel open. It never starts by itself, and the dashboard server d
 node bin/reckon watch             # until ctrl+c
 node bin/reckon watch --once      # one full reading, printed, then exit
 node bin/reckon watch --corner    # also show the lantern in a small window, only when things turn bad
+node bin/reckon watch --pet       # the lantern as a small native pet, above every window (macOS)
 ```
 
 It says what it costs when it starts (about 50 MB, one cheap reading every 30 seconds), writes only
@@ -155,7 +156,31 @@ The **corner window** is the lantern from `/pet`, fed with the real number. It o
 bad, closes by itself when they calm, shows the command as text with a copy button, and is served from
 the watcher itself on `127.0.0.1:4128`. The page in it asks the watcher for its numbers every three
 seconds; that is the one place this project polls, and it exists only if you asked for `--corner`. It is
-a browser window, so it is not always on top: over a full-screen app, the banner is what reaches you.
+a browser window, so it is not always on top. For that there is `--pet`, below; without it, over a
+full-screen app, the banner is what reaches you.
+
+The **pet** (`--pet`, on a Mac) is the same lantern drawn natively, in a small window that stays above
+everything, full-screen apps included. It is the one native file in this project: `native/pet.swift`,
+compiled on your own machine by your own `swiftc` the first time. It needs the Xcode Command Line
+Tools; reckon checks for them and never starts their installation. Nothing prebuilt is shipped or
+downloaded, and everything else works without it.
+
+- It reads `~/.cache/reckon/watch.json` itself. It opens no port and talks to no one.
+- It runs nothing. Click it for a card with the headline and the command as **text**, with a copy
+  button; the card starts closed and closes by itself after 15 seconds.
+- Right-click it to hide it for an hour, hide it, or quit. Drag it anywhere; it remembers the place in
+  `~/.cache/reckon/pet.json`.
+- It leaves when the watcher does, including when the watcher is killed. It does not come back until the
+  next `reckon watch --pet`, and nothing starts it at login.
+- `bin/check.js` refuses a version of the file that starts a process, names an address, deletes a file
+  or writes outside the cache folder, and compares its drawing numbers with the browser lantern's at
+  101 levels.
+
+Measured on one Mac on 2026-10-06 (Swift 6.3.3, macOS 26): the first compile took 29.6 s with a cold
+module cache, and starting it afterwards 118 ms; with the lantern at full strain it held about 12 MB
+and 0.0% CPU in `top`, a figure that leaves out the drawing, which the window server does. It was seen
+above a full-screen app on that Mac. Not tried: Stage Manager, a second display, a game in exclusive
+full screen, or macOS versions other than that one. Windows keeps the log and the state file.
 
 ---
 

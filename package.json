@@ -11,6 +11,7 @@
     "bin/",
     "lib/",
     "web/",
+    "native/pet.swift",
     "build/build-sea.js",
     "server.js",
     "reckon.config.example.json",

@@ -17,6 +17,12 @@ no accounts, no API keys, and no server it talks to except itself.
 - Serves a web page from `127.0.0.1` (loopback only — nothing outside the machine can
   even reach it; see the README for why that means no login is needed either).
 - Caches what it measured in `~/.cache/reckon/` so it doesn't re-measure on every click.
+- If you run `reckon watch --pet` on a Mac, compiles one Swift file (`native/pet.swift`) on your own
+  machine and runs it as a child of the watcher. The pet reads `~/.cache/reckon/watch.json`, draws a
+  small window above your other windows, and writes one file, `~/.cache/reckon/pet.json`, with which
+  display it sits on and where. It opens no port, makes no request, starts no program and deletes
+  nothing: `bin/check.js` fails if the file names an address, starts a process, deletes a file or
+  writes outside that folder.
 - Writes command **text** to the screen for you to read and run yourself — DNS changes
   and `/etc/hosts` blocklist entries included. It does not run those commands.
 
@@ -25,6 +31,9 @@ no accounts, no API keys, and no server it talks to except itself.
 - **reckon only contacts machines your computer was already configured to use.**
 That is the rule, and it is narrower and more checkable than "no outbound requests"
 — which was never true of this tool and should not have been claimed.
+- **The pet is a window like any other.** If you share or record your screen, it can be part of what is
+  shared. Its card can name processes, so it starts closed and closes itself after 15 seconds; "Hide" in
+  its right-click menu removes it until the next run.
 - **No telemetry.** Nothing about your usage, your machine, or what the tool found is
   recorded anywhere but your own disk.
 - **No accounts, no sign-in, no API keys.** There is nothing to leak because there is
