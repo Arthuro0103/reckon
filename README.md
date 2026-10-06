@@ -1,69 +1,54 @@
-# reckon
+<p align="center">
+  <img src="docs/img/banner.svg" alt="reckon: your computer is full, this tells you what to do about it. Local, read-only, never deletes." width="100%">
+</p>
 
-**A local dashboard that tells you what to do about your Mac — and never deletes anything itself.**
+**reckon tells you what to do about a full or struggling computer, and never deletes anything itself.** It runs on your machine, on macOS and Windows, with no dependencies and no telemetry.
 
-![The Disk tab: a treemap of every cache this tool can name, each one carrying its verdict](docs/disk.png)
+## Why it exists
 
-*The Disk tab. Area is size, colour is the verdict, and "cannot judge" is a real answer.*
+It started because my computer felt painfully slow. An AI assistant went through it and found about 50 GB I could free. I built reckon to go deeper than that, and to work for any machine instead of only mine. On the same computer it found roughly another 100 GB, almost all of it Docker data sitting in caches nobody knew about.
 
----
+That is one machine and one author, so read it as the story of why the tool exists, not as a benchmark. Three decisions came out of it:
 
-## Who it is for
+1. **A decision, not a treemap.** Most disk tools draw the folders and leave the thinking to you. reckon opens with what you can free, and why each item is safe.
+2. **It never deletes anything.** It reads your machine, works out what it thinks, hands you the command, and stops. You run it.
+3. **"Cannot judge" is an answer.** It only calls something disposable when it can prove the machine rebuilds it. Everything else it names and leaves alone.
 
-Anyone with a full disk. Until recently that was not true: reckon only knew how to
-find developer leavings — package caches, `node_modules`, container logs — so on a
-machine that had never run `npm` it opened with "you can free 0.4 GB", which is
-honest and useless.
+![The Overview tab: "You can free 9.95 GB", the items behind that number, and what changed since the last scan](docs/img/overview.png)
 
-It now also knows the junk a computer accumulates on its own: browser caches and
-offline site data for eight browsers, Windows Update leftovers, `Windows.old`,
-temporary files, the Recycle Bin, thumbnail and preview caches, Mail attachment
-copies, and iPhone backups. On the developer machine this was written on those
-came to 6.9 GB — on a machine that only browses, they are the whole story.
-
-Two are worth naming because almost nobody knows they exist: a browser's
-**offline site data** had grown to 1.5 GB across 67 sites here, and **iPhone
-backups** are frequently the single largest folder on a Mac. The second is listed
-and never offered for deletion, because it is often the only copy of photos from
-before the last iCloud sync.
+*The Overview, captured 2026-10-06 on the author's machine. One private project name is covered.*
 
 ## What it is
 
-Most disk tools show you a treemap and leave the thinking to you. This one opens with a
-decision:
+Every item carries three things, always: **how much it frees**, **the proof of that number**, and **what you lose if the verdict is wrong**. Without all three it does not become a row.
 
-> **You can free 50.5 GB.** 9.95 GB in the log of a container stuck restarting · 9.60 GB in
-> the npm cache · 9.57 GB in a local VM you have not used since May · and 13 smaller items.
-> **Staying put:** 6.7 GB of downloaded AI models and a worktree holding unmerged commits,
-> because neither can be proven rebuildable.
-
-Every item carries three things, always: **how much it frees**, **the proof of that number**,
-and **what you lose if the verdict is wrong**. Without all three it does not become a row.
+![How reckon works: it reads your machine, judges every item, hands you the command, and you run it](docs/img/flow.svg)
 
 ### It never deletes anything
 
-Not a safety toggle — a design constraint. `reckon` writes only inside `~/.cache/reckon/`. It
-reads your machine, works out what it thinks, hands you the command, and stops. You run it.
+Not a safety toggle, a design constraint. `reckon` writes only inside `~/.cache/reckon/`. It reads your machine, works out what it thinks, hands you the command, and stops. You run it.
 
-That rule is why the interesting work is in the *judgement*, not in the deleting. A tool that
-deletes has to be conservative to be safe. A tool that only recommends can afford to say
-exactly what it found and exactly how sure it is.
+That rule is why the interesting work is in the *judgement*, not in the deleting. A tool that deletes has to be conservative to be safe. A tool that only recommends can afford to say exactly what it found and exactly how sure it is.
 
 ### It measures itself
 
-A panel that runs all the time spends the memory it is measuring. So the footer shows, always,
-how much RAM and CPU `reckon` itself is using and how that compares to what it found. On the
-machine it was built for: **46 MB, 0.28% of RAM**, against 50.5 GB pointed at. If that ever
-inverts, the footer says so instead of hiding it.
+A panel that runs all the time spends the memory it is measuring. So the footer shows, always, how much RAM and CPU `reckon` itself is using and how that compares to what it found. In the Overview above: 94.8 MB of RAM (0.58% of the machine) and 4.8% CPU, pointing at 9.95 GB. If that ever inverts, the footer says so instead of hiding it.
 
-The architecture follows from that. No framework, no bundler, **no dependencies at all**.
-Collection happens on demand — between your clicks the process sits at 0% CPU. There is no
-background daemon and no telemetry; nothing leaves the machine. The one thing that
-watches is `reckon watch`, below, and it never starts unless you run it.
+The architecture follows from that. No framework, no bundler, **no dependencies at all**. Collection happens on demand: between your clicks the process sits at 0% CPU. There is no background daemon and no telemetry; nothing leaves the machine. The one thing that watches is `reckon watch`, below, and it never starts unless you run it.
+
+## Who it is for
+
+Anyone with a full disk. reckon first knew only developer leftovers (package caches, `node_modules`, container logs), so on a machine that had never run `npm` it had little to say. It now also knows what any computer accumulates on its own: browser caches and offline site data for eight browsers, Windows Update leftovers, `Windows.old`, temporary files, the Recycle Bin, thumbnail and preview caches, Mail attachment copies, and iPhone backups. The last is listed and never offered for deletion, because it is often the only copy of photos from before the last iCloud sync.
 
 ---
 
 ## Install
+
+```bash
+npx @arthurparis/reckon          # http://127.0.0.1:4127
+```
+
+Or from a clone:
 
 ```bash
 git clone https://github.com/Arthuro0103/reckon.git
@@ -71,7 +56,7 @@ cd reckon
 node server.js          # http://127.0.0.1:4127
 ```
 
-Node 18+. There is no `npm install` — the project has no dependencies.
+Node 18+. There is no `npm install` for a clone: the project has no dependencies.
 
 ```bash
 node bin/scan.js        # deep scan from the terminal (~2 min)
@@ -101,6 +86,18 @@ never end up in a commit.
 | **Internet** | which link is carrying traffic, the round trip to your router and to the resolvers you already use, and — behind their own buttons, with the cost stated first — throughput and the Wi-Fi radio |
 | **Checks** | what is broken and has a fix |
 | **DNS** | two halves: a blocklist you build, and the resolver your machine asks |
+
+![The Disk tab: a treemap of every cache this tool can name, colour is the verdict](docs/img/disk.png)
+
+*Disk. Area is size, colour is the verdict, and "cannot judge" is a real answer. Captured 2026-10-06.*
+
+![The Memory tab: what is using RAM right now, grouped by app](docs/img/memory.png)
+
+*Memory. Fifty processes named Opera count as one thing, because that is what the person looking sees. Captured 2026-10-06.*
+
+![The Pressure tab: how much slower the machine runs than at its best, and how much swap is in use](docs/img/pressure.png)
+
+*Pressure. Time instead of bytes: the same fixed piece of arithmetic, now against the fastest the machine has ever done it. Captured 2026-10-06.*
 
 DNS is a **separate tab on purpose**. A bug in the monitor shows a wrong number; a bug in DNS
 leaves you without internet, and you will not connect the two. Neither can take the other down,
@@ -133,7 +130,9 @@ and look; it is never the answer.
 
 An alert says how much it costs, the proof of the number, and what you lose if it is wrong. One problem
 rings once, again only if it gets worse by a step, and is announced once when it clears. The banner is
-a native macOS notification; if you never see one, check System Settings > Notifications for Script Editor.
+a native macOS notification; if you never see one, check System Settings > Notifications for Script Editor. Banners and the corner window are macOS features, and `watch` has not been tested on Windows.
+
+![The four expressions of the lantern: resting, watching, uneasy, strained](docs/img/lanterns.svg)
 
 The **corner window** is the lantern from `/pet`, fed with the real number. It opens when things turn
 bad, closes by itself when they calm, shows the command as text with a copy button, and is served from
@@ -164,8 +163,8 @@ running one — and only ever recommends removing the first group, one at a time
 
 **Commits off the main branch.** Before calling any folder garbage, `reckon` runs
 `git rev-list --count main..HEAD`. Then it goes further and checks whether those commits exist
-on any remote. 175 commits off your local `main` but pushed to `origin` is one kind of risk;
-175 that exist only on this disk is another. The screen keeps them apart.
+on any remote. Commits off your local `main` that were also pushed to `origin` are one kind of risk;
+the same commits existing only on this disk are another. The screen keeps them apart.
 
 **Obsidian vaults are minefields.** Inside an iCloud-backed vault `ls` lies: iCloud evicts file
 contents and leaves placeholders, so a directory listing can report fewer files than the vault
