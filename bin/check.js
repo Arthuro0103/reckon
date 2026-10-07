@@ -1479,6 +1479,22 @@ async function serverGuards() {
     if (deep.status === 405 && /POST/.test(deep.text)) ok('GET /api/deep is refused with 405 and says to use POST');
     else fail('GET /api/deep still starts a scan', String(deep.status));
 
+    // The plan route: a POST under the same guard as every other /api/act/ route. It reads and builds.
+    const planGet = await ask('GET', '/api/act/plan');
+    if (planGet.status === 404) ok('GET /api/act/plan is not a route: the plan is a POST');
+    else fail('GET /api/act/plan answered', String(planGet.status));
+    const planBody = JSON.stringify({ needMB: 100 });
+    const planJson = { 'content-type': 'application/json' };
+    const planBare = await ask('POST', '/api/act/plan', planJson, planBody);
+    const planForeign = await ask('POST', '/api/act/plan', { ...planJson, 'x-reckon-token': token, origin: 'http://evil.example' }, planBody);
+    const planRebound = await ask('POST', '/api/act/plan', { ...planJson, 'x-reckon-token': token, host: `evil.example:${port}` }, planBody);
+    if (planBare.status === 403 && planForeign.status === 403 && planRebound.status === 403) ok('POST /api/act/plan without the token, from another Origin, or under another Host is refused (403)');
+    else fail('the plan route is not behind the guard', [planBare.status, planForeign.status, planRebound.status].join(','));
+    const planGood = await ask('POST', '/api/act/plan', { ...planJson, 'x-reckon-token': token, origin: `http://127.0.0.1:${port}` }, planBody);
+    let planAns = null; try { planAns = JSON.parse(planGood.text); } catch { /* shown below */ }
+    if (planGood.status === 200 && planAns && planAns.ok === false && /at least/.test(planAns.refused || '')) ok('the panel\'s own POST reaches the plan, which refuses an ask below 256 MB without reading or running anything');
+    else fail('the plan route did not answer the panel\'s own POST', `${planGood.status} ${planGood.text.slice(0, 80)}`);
+
     const snippet = path.join(home, '.cache', 'reckon', 'hosts-block.txt');
     if (redirected) {
       fs.mkdirSync(path.dirname(snippet), { recursive: true });
@@ -3387,6 +3403,299 @@ async function aiSandbox() {
   else fail('the AI-session tests wrote to the real actions.log');
 }
 
+// "I need X GB": the plan, the queue it hands to, helper grouping and the Docker advice card.
+// Every machine here is a fake one: a process list and a memory reading held in variables, an exec that only
+// records, a HOME in a temp dir. Nothing is run against the real machine.
+async function memoryPlan() {
+  const os = require('node:os');
+  const act = require(path.join(ROOT, 'lib/act.js'));
+  const mem = require(path.join(ROOT, 'lib/memory.js'));
+  const platform = require(path.join(ROOT, 'lib/platform'));
+  const NOW = 2_000_000_000_000;
+  const MB = 1024;   // KB per MB
+  const T = (pid, comm, ageS = 7200) => ({ pid, comm, startedAt: NOW - ageS * 1000 });
+
+  // ---- 1. the plan: ordering, totals, honesty -----------------------------------------------------
+  const ran = [], logged = [];
+  let AVAIL = 1000;
+  const mk = (o = {}) => act.createEngine({
+    processList: async () => [], appBundle: async () => null, runningContainers: async () => 0,
+    memoryStats: async () => ({ totalBytes: 32 * 1024 * 1048576, freeBytes: 0, inactiveBytes: 0 }), memoryPressure: async () => null,
+    exec: async (cmd, args) => { ran.push([cmd, ...args]); return { ok: true, out: '', erro: null }; },
+    log: { append: (e) => { logged.push(e); return true; } },
+    available: async () => AVAIL,
+    now: () => NOW, selfPid: 777, dryRun: true, minDelayMs: 0, killAfterMs: 0, settleMs: 0, ...o,
+  });
+  const row = (id, action, kbMB, over = {}) => ({ id, title: `title ${id}`, kb: kbMB * MB, mb: kbMB, confidence: 'medium', lose: `lose ${id}`,
+    action: { id: action, label: action }, target: { kind: 'x', pids: [T(Number(String(id).replace(/\D/g, '')) || 1, '/bin/x')], main: T(1, '/bin/x') }, ...over });
+  const memRows = [
+    row('group-orca', 'quit-app', 3000, { target: { kind: 'app', appPath: '/Applications/Orca.app', bundleId: 'com.example.orca', name: 'Orca', main: T(900, '/Applications/Orca.app/Contents/MacOS/Orca'), pids: [T(900, 'o'), T(901, 'o')] } }),
+    row('ollama-llama', 'stop-ollama-model', 2000, { target: { kind: 'ollama', name: 'llama3:latest' } }),
+    row('simulators', 'shutdown-simulators', 1500, { target: { kind: 'simulators', roots: [T(3001, '/x/launchd_sim')] } }),
+    row('docker-idle', 'quit-docker', 2500, { target: { kind: 'docker', main: T(3100, '/Applications/Docker.app/Contents/MacOS/com.docker.backend') } }),
+    row('group-huge-low', 'quit-app', 9000, { confidence: 'low' }),
+  ];
+  const pressRows = [
+    row('orphan-tool-mcp', 'stop-orphan-tools', 500, { target: { kind: 'orphan-tool', label: 'mcp', rootPids: [4001], pids: [T(4001, '/x/node'), T(4002, '/x/node')] } }),
+    row('ai-session-5001', 'end-ai-session', 600, { target: { kind: 'ai-session', tool: 'claude', resume: "cd '/x' && claude --resume", pid: T(5001, '/x/claude') } }),
+    row('ai-session-5002', 'end-ai-session', 300, { target: { kind: 'ai-session', tool: 'claude', resume: null, pid: T(5002, '/x/claude') } }),
+    row('swarm-yes', 'term-processes', 400, { confidence: 'high', target: { kind: 'swarm', pids: [T(6001, '/usr/bin/yes'), T(6002, '/usr/bin/yes')] } }),
+    // The same process as the orphan tool above: it is counted once.
+    row('swarm-dup', 'term-processes', 450, { confidence: 'high', target: { kind: 'swarm', pids: [T(4002, '/x/node')] } }),
+    row('swarm-tiny', 'term-processes', 0, { confidence: 'high' }),
+  ];
+  const diskRow = { ...row('disk-cache', 'clear-cache', 5000), target: { kind: 'cache', members: [] } };
+  let e = mk();
+  e.remember('memory', memRows);
+  e.remember('pressure', pressRows);
+  e.remember('disk', [diskRow]);
+
+  const big = await e.plan({ needMB: 16 * 1024 });
+  const order = big.items.map((i) => i.id).join(',');
+  const wantOrder = 'ollama-llama,orphan-tool-mcp,ai-session-5001,simulators,docker-idle,ai-session-5002,swarm-yes,group-orca';
+  if (big.ok && order === wantOrder) ok('plan order: reversible first (Ollama model, orphaned servers, session with a resume command, simulators, Docker VM), then the rest, and the app that asks to save last');
+  else fail('the plan is in the wrong order', order);
+  const sums = big.items.map((i) => i.runningTotalMB).join(',');
+  if (sums === '2000,2500,3100,4600,7100,7400,7800,10800' && big.totalMB === 10800 && big.items.every((i) => i.upToMB === Math.floor(i.upToMB))) ok('each item shows "up to" its measured MB with a running total (2000, 2500, 3100, 4600, 7100, 7400, 7800, 10800)');
+  else fail('the running total is wrong', sums);
+  const last = big.items[big.items.length - 1];
+  if (last.asksToSave && big.items.filter((i) => i.asksToSave).length === 1 && last.tierLabel === 'asks to save first') ok('only the app whose quit asks to save is flagged "asks to save first", and it is last');
+  else fail('the asks-to-save flag is wrong', JSON.stringify(big.items.map((i) => [i.id, i.asksToSave])));
+  const noResume = big.items.find((i) => i.id === 'ai-session-5002'), withResume = big.items.find((i) => i.id === 'ai-session-5001');
+  if (withResume.tier === 0 && withResume.resume && noResume.tier === 1) ok('an idle session counts as easy to get back only when it has a resume command');
+  else fail('the session tiers are wrong', JSON.stringify([withResume.tier, noResume.tier]));
+  if (!big.items.some((i) => ['group-huge-low', 'disk-cache', 'swarm-dup', 'swarm-tiny'].includes(i.id))) ok('a low-confidence row, a disk row, a row sharing a process with another, and a row under 1 MB never enter the plan');
+  else fail('a row that must not be planned was planned', order);
+  if (!big.reaches && /free up to 10\.5 GB; you asked for 16 GB available/.test(big.message) && /nothing else here is safe to stop/.test(big.message)) ok('when the whole list cannot reach the need it says so: "these free up to X GB; you asked for Y GB; nothing else here is safe to stop"');
+  else fail('the "cannot reach" message is not honest', big.message);
+
+  const small = await e.plan({ needMB: 4096 });
+  if (small.reaches && small.items.map((i) => i.id).join(',') === 'ollama-llama,orphan-tool-mcp,ai-session-5001' && small.totalMB === 3100 && small.gapMB === 3096) ok('the list stops as soon as the total reaches the gap (4 GB asked, 1000 MB already available: three steps, 3100 MB)');
+  else fail('the plan did not stop where the need was met', JSON.stringify([small.items.map((i) => i.id), small.totalMB, small.gapMB]));
+  const withSave = await e.plan({ needMB: 10 * 1024 });
+  if (withSave.reaches && withSave.items[withSave.items.length - 1].id === 'group-orca' && /asks to save first/.test(withSave.message)) ok('when only the app that asks to save gets the plan there, it is last and the message says so');
+  else fail('the asks-to-save case is wrong', withSave.message);
+  AVAIL = 5000;
+  const already = await e.plan({ needMB: 4096 });
+  if (already.ok && already.enough && !already.items.length && /already covers/.test(already.message)) ok('when enough is already available the plan is empty and says so');
+  else fail('an already-met need still got a plan', JSON.stringify(already));
+  AVAIL = 1000;
+  const tooBig = await e.plan({ needMB: 64 * 1024 }), tooSmall = await e.plan({ needMB: 10 }), noNum = await e.plan({ needMB: 'lots' }), noBody = await e.plan(null);
+  if (!tooBig.ok && /never be available/.test(tooBig.refused) && !tooSmall.ok && !noNum.ok && !noBody.ok) ok('a need larger than the machine, below 256 MB, not a number, or no body is refused');
+  else fail('a bad ask was planned', JSON.stringify([tooBig, tooSmall, noNum, noBody]));
+  AVAIL = null;
+  const blind = await e.plan({ needMB: 4096 });
+  if (blind.ok && blind.availableMB === null && blind.gapMB === 4096 && /could not be read/.test(blind.message)) ok('available memory that cannot be read is not guessed: the whole ask is the gap, and the message says why');
+  else fail('an unreadable available figure was guessed at', JSON.stringify(blind));
+  AVAIL = 1000;
+  if (!ran.length && !logged.length) ok('building a plan runs nothing and logs nothing');
+  else fail('the plan ran or logged something', JSON.stringify([ran, logged]));
+  // The plan code itself never reaches the executor.
+  const planSrc = (read('lib/act.js').match(/async function plan\(body\) \{[\s\S]*?\n  \}\n/) || [''])[0];
+  if (planSrc.length > 500 && !/deps\.exec|execute\(|runOne|deps\.read/.test(planSrc)) ok('the plan function never calls the executor, runOne or a reader of the machine');
+  else fail('the plan function reaches an executor');
+
+  // ---- 2. the queue the plan hands to --------------------------------------------------------------
+  let procs;
+  const reset = () => {
+    procs = [
+      { pid: 5101, ppid: 1, rssKB: 1500 * MB, ageS: 7200, startedAt: NOW - 7200_000, command: '/usr/bin/yes' },
+      { pid: 5102, ppid: 1, rssKB: 1500 * MB, ageS: 7200, startedAt: NOW - 7200_000, command: '/usr/bin/yes' },
+      { pid: 5103, ppid: 1, rssKB: 1500 * MB, ageS: 7200, startedAt: NOW - 7200_000, command: '/usr/bin/yes' },
+      { pid: 5104, ppid: 1, rssKB: 1500 * MB, ageS: 7200, startedAt: NOW - 7200_000, command: '/usr/bin/yes' },
+      { pid: 900, ppid: 1, rssKB: 900 * MB, ageS: 600, startedAt: NOW - 600_000, command: '/Applications/Sample.app/Contents/MacOS/Sample' },
+      { pid: 901, ppid: 900, rssKB: 100 * MB, ageS: 600, startedAt: NOW - 600_000, command: '/Applications/Sample.app/Contents/Frameworks/H.app/Contents/MacOS/H' },
+    ];
+  };
+  reset();
+  ran.length = 0; logged.length = 0;
+  const killed = (args) => args.slice(1).forEach((p) => { procs = procs.filter((x) => x.pid !== Number(p)); });
+  const seq = [];   // the fake "available memory": what each reading returns, in order
+  let reads = 0;
+  const mkq = (o = {}) => act.createEngine({
+    processList: async () => procs.map((p) => ({ ...p })),
+    appBundle: async (c) => (String(c).startsWith('/Applications/Sample.app/') ? { appPath: '/Applications/Sample.app', bundleId: 'com.example.sample', name: 'Sample' } : null),
+    runningContainers: async () => 0, memoryStats: async () => ({ totalBytes: 32 * 1024 * 1048576 }), memoryPressure: async () => null,
+    exec: async (cmd, args) => {
+      ran.push([cmd, ...args]);
+      if (cmd === 'kill') killed(args);
+      if (cmd === 'osascript') procs = procs.filter((x) => !x.command.startsWith('/Applications/Sample.app/'));
+      return { ok: true, out: '', erro: null };
+    },
+    log: { append: (x) => { logged.push(x); return true; } },
+    available: async () => { const v = seq[Math.min(reads, seq.length - 1)]; reads++; return v; },
+    now: () => NOW, selfPid: 777, dryRun: false, minDelayMs: 0, killAfterMs: 0, settleMs: 0, ...o,
+  });
+  const swarm = (id, pid) => ({ id, title: `swarm ${pid}`, kb: 1500 * MB, confidence: 'high', lose: 'a loop', action: { id: 'term-processes', label: 'Stop' },
+    target: { kind: 'swarm', pids: [T(pid, '/usr/bin/yes')] } });
+  const sample = { id: 'group-sample', title: 'Sample', kb: 1000 * MB, confidence: 'medium', lose: 'open docs', action: { id: 'quit-app', label: 'Quit Sample' },
+    target: { kind: 'app', appPath: '/Applications/Sample.app', bundleId: 'com.example.sample', name: 'Sample', main: T(900, '/Applications/Sample.app/Contents/MacOS/Sample', 600),
+      pids: [T(900, '/Applications/Sample.app/Contents/MacOS/Sample', 600), T(901, '/Applications/Sample.app/Contents/Frameworks/H.app/Contents/MacOS/H', 600)] } };
+  const rowsQ = [sample, swarm('swarm-a', 5101), swarm('swarm-b', 5102), swarm('swarm-c', 5103), swarm('swarm-d', 5104)];
+  const items = (ids) => ids.map((id) => ({ action: id === 'group-sample' ? 'quit-app' : 'term-processes', id }));
+
+  // 2a. one summed preview; the app that asks to save is moved behind the rest, whatever order was sent
+  let q = mkq(); q.remember('pressure', rowsQ);
+  const pv = await q.previewQueue({ items: items(['group-sample', 'swarm-a', 'swarm-b', 'swarm-c']), needMB: 4000 });
+  if (pv.ok && pv.kind === 'memory' && pv.nonce && pv.items.map((i) => i.id).join() === 'swarm-a,swarm-b,swarm-c,group-sample' && pv.totalKB === (3 * 1500 + 1000) * MB
+    && pv.items.find((i) => i.id === 'group-sample').asksToSave && pv.items.every((i) => i.proof && i.lose && i.command)) ok('queue preview: one summed total, every item with proof, what you lose and the exact command, and the app that asks to save moved last');
+  else fail('the memory queue preview is wrong', JSON.stringify(pv).slice(0, 300));
+  const mixed = await mkq().previewQueue({ items: [{ action: 'term-processes', id: 'swarm-a' }, { action: 'clear-cache', id: 'disk-x' }] });
+  const notPlanned = await mkq().previewQueue({ items: [{ action: 'kill-processes', id: 'swarm-a' }] });
+  if (!mixed.ok && !notPlanned.ok && /not both|not queued/.test(mixed.refused + notPlanned.refused)) ok('a queue never mixes disk and memory rows, and a memory action outside the plan\'s table (the forced stop) is not queued');
+  else fail('a queue took a mix or an action outside the plan', JSON.stringify([mixed.refused, notPlanned.refused]));
+
+  // 2b. early stop: the real available memory is read before the first step and after each, and the rest are skipped
+  ran.length = 0; logged.length = 0; reads = 0; seq.length = 0; seq.push(1000, 1500, 4200);
+  q = mkq(); q.remember('pressure', rowsQ);
+  let pre = await q.previewQueue({ items: items(['swarm-a', 'swarm-b', 'swarm-c', 'swarm-d']), needMB: 4000 });
+  let r = await q.runQueue({ nonce: pre.nonce });
+  const killsRan = ran.filter((c) => c[0] === 'kill').map((c) => c.join(' ')).join(' | ');
+  if (r.ok && r.results.length === 2 && r.skipped === 2 && killsRan === 'kill -TERM 5101 | kill -TERM 5102'
+    && r.plan.metNeed && r.plan.stoppedEarly && r.plan.availableBefore === 1000 && r.plan.availableAfter === 4200) ok('early stop: after the second step the measured available memory (4200 MB) meets the 4000 MB need, so only two steps ran');
+  else fail('the plan did not stop early', JSON.stringify({ n: r.results && r.results.length, ran: killsRan, plan: r.plan }));
+  if (r.skippedItems.map((s) => s.id).join() === 'swarm-c,swarm-d' && r.skippedItems.every((s) => /need was already met/.test(s.why))) ok('the steps that were not run are named, with the reason: the need was already met');
+  else fail('the skipped steps are not said', JSON.stringify(r.skippedItems));
+  if (logged.filter((l) => l.action === 'term-processes' && l.ok).length === 2 && !logged.some((l) => l.id === 'swarm-c')) ok('every step that ran is in actions.log, and the skipped ones are not');
+  else fail('actions.log does not match what ran', JSON.stringify(logged.map((l) => l.id)));
+
+  // 2c. never starts what is already enough; and runs to the end, honestly short, when the need is never met
+  procs = null; reset(); ran.length = 0; reads = 0; seq.length = 0; seq.push(5000);
+  q = mkq(); q.remember('pressure', rowsQ);
+  pre = await q.previewQueue({ items: items(['swarm-a', 'swarm-b']), needMB: 4000 });
+  r = await q.runQueue({ nonce: pre.nonce });
+  if (r.ok && !r.results.length && r.skipped === 2 && r.plan.metNeed && !ran.length) ok('available memory already at the need before the first step: nothing is run, both steps are said to be skipped');
+  else fail('a met need still started the queue', JSON.stringify({ ran, plan: r.plan }));
+  reset(); ran.length = 0; reads = 0; seq.length = 0; seq.push(1000, 1100, 1200);
+  q = mkq(); q.remember('pressure', rowsQ);
+  pre = await q.previewQueue({ items: items(['swarm-a', 'swarm-b']), needMB: 4000 });
+  r = await q.runQueue({ nonce: pre.nonce });
+  if (r.ok && r.results.length === 2 && !r.plan.metNeed && !r.plan.stoppedEarly && r.plan.availableAfter === 1200) ok('when the need is never met, every step runs and the result says the need was not met, with the real before and after');
+  else fail('a short plan claimed success', JSON.stringify(r.plan));
+
+  // 2d. the first refusal stops the queue
+  reset(); ran.length = 0; reads = 0; seq.length = 0; seq.push(1000);
+  q = mkq(); q.remember('pressure', rowsQ);
+  pre = await q.previewQueue({ items: items(['swarm-a', 'swarm-b', 'swarm-c']), needMB: 8000 });
+  procs.find((p) => p.pid === 5102).startedAt += 60000;   // pid 5102 is now another process
+  r = await q.runQueue({ nonce: pre.nonce });
+  if (!r.ok && r.stoppedAt === 'swarm-b' && r.results.length === 2 && r.skipped === 1 && r.skippedItems[0].id === 'swarm-c' && /refused/.test(r.skippedItems[0].why)
+    && ran.filter((c) => c[0] === 'kill').length === 1) ok('stop on the first refusal: step 2 is refused at the click (its pid is another process now), step 3 is skipped and said to be, only step 1 ran');
+  else fail('the queue did not stop on a refusal', JSON.stringify({ stoppedAt: r.stoppedAt, n: r.results.length, ran }));
+  const replay = await q.runQueue({ nonce: pre.nonce });
+  if (!replay.ok && /No queue preview/.test(replay.refused)) ok('a queue nonce works once');
+  else fail('a queue nonce ran twice');
+
+  // 2e. the countdown is a server rule for the memory queue too
+  reset(); reads = 0; seq.length = 0; seq.push(1000);
+  const slow = mkq({ minDelayMs: 5000 }); slow.remember('pressure', rowsQ);
+  const sp = await slow.previewQueue({ items: items(['swarm-a']), needMB: 4000 });
+  const early = await slow.runQueue({ nonce: sp.nonce });
+  if (!early.ok && /Too soon/.test(early.refused)) ok('a memory queue run sooner than five seconds after its preview is refused by the server');
+  else fail('the memory queue skipped the countdown', JSON.stringify(early));
+
+  // ---- 3. helpers grouped under their app -----------------------------------------------------------------
+  const P = (pid, command, family, kbMB, ppid = 1) => ({ pid, ppid, command, family, rssKB: kbMB * MB, cpuPct: 1, ageS: 5000, startedAt: NOW - 5_000_000, tty: null });
+  const ORCA = '/Applications/Orca.app/Contents';
+  const fake = [
+    P(11, `${ORCA}/MacOS/Orca`, 'Orca', 120),
+    P(12, `${ORCA}/Frameworks/Orca Helper (Renderer).app/Contents/MacOS/Orca Helper (Renderer)`, 'Orca Helper (Renderer)', 150, 11),
+    P(13, `${ORCA}/Frameworks/Orca Helper (GPU).app/Contents/MacOS/Orca Helper (GPU)`, 'Orca Helper (GPU)', 90, 11),
+    P(14, `${ORCA}/Frameworks/Orca Helper.app/Contents/MacOS/Orca Helper`, 'Orca Helper', 50, 11),
+    P(21, '/Applications/Cursor.app/Contents/MacOS/Cursor', 'Cursor', 100),
+    P(22, '/Applications/Cursor.app/Contents/Frameworks/Cursor Helper (Renderer).app/Contents/MacOS/Cursor Helper (Renderer)', 'Cursor Helper (Renderer)', 200, 21),
+    P(31, '/Applications/Discord.app/Contents/MacOS/Discord', 'Discord', 80),
+    P(32, '/Applications/Discord.app/Contents/Frameworks/Discord Helper (Renderer).app/Contents/MacOS/Discord Helper (Renderer)', 'Discord', 60, 31),
+    P(41, '/usr/local/bin/node', 'node (dev servers)', 300),
+    P(42, '/usr/local/bin/other', 'other', 1),   // under the 2 MB floor
+  ];
+  const groups = mem.group(mem.processes(fake));
+  const names = groups.map((g) => g.name).sort().join(',');
+  const orca = groups.find((g) => g.name === 'Orca');
+  if (names === 'Cursor,Discord,Orca,node (dev servers)' && orca.n === 4 && orca.rssKB === 410 * MB) ok('helpers sit under their parent .app as one group: "Orca: 4 processes, 410 MB" (Orca, Orca Helper, Orca Helper (Renderer), Orca Helper (GPU)), and a name the platform already knew is kept');
+  else fail('helpers are not grouped under their app', `${names} / ${orca && orca.n} / ${orca && orca.rssKB}`);
+  if (mem.appOf('/usr/local/bin/node') === null && mem.appOf('relative/App.app/x') === null && mem.appOf(`${ORCA}/Frameworks/X.app/Contents/MacOS/X`).appPath === '/Applications/Orca.app') ok('the parent app is the outermost .app; a command outside any bundle has none');
+  else fail('appOf is wrong');
+  const keep = {};
+  for (const k of ['processList', 'memoryStats', 'swapStats', 'memoryPressure', 'appBundle']) keep[k] = platform[k];
+  try {
+    platform.processList = async () => fake;
+    platform.memoryStats = async () => ({ totalBytes: 16 * 1073741824, freeBytes: 1e9, activeBytes: 1e9, inactiveBytes: 1e9, wiredBytes: 1e9, compressedBytes: 0, pageSizeBytes: 4096 });
+    platform.swapStats = async () => ({ totalMB: 0, usedMB: 0, freeMB: 0 });
+    platform.memoryPressure = async () => null;
+    platform.appBundle = async (c) => { const m = /^(\/Applications\/([^/]+)\.app)\//.exec(String(c)); return m ? { appPath: m[1], bundleId: `com.example.${m[2].toLowerCase()}`, name: m[2] } : null; };
+    const d = await mem.collect();
+    const g = d.groups.find((x) => x.name === 'Orca');
+    const withAction = d.groups.filter((x) => x.action);
+    const orcaRows = d.groups.filter((x) => x.target && x.target.appPath === '/Applications/Orca.app');
+    if (g && g.n === 4 && g.helpers === 3 && g.procs.length === 4 && g.procs.filter((p) => p.helper).length === 3 && !g.procs.find((p) => p.pid === 11).helper) ok('the group row carries its processes with the helpers marked, "Orca: 4 processes, 3 helpers"');
+    else fail('the Orca group row is wrong', JSON.stringify(g && { n: g.n, helpers: g.helpers, procs: g.procs.length }));
+    if (g.action && g.action.id === 'quit-app' && orcaRows.length === 1 && g.target.pids.length === 4 && withAction.every((x) => x.action.id === 'quit-app')) ok('quit-app is on the app row only: one row for Orca, naming all four pids, and no group offers any other action');
+    else fail('quit-app is not on the app row only', JSON.stringify({ rows: orcaRows.length, action: g.action }));
+    if (!JSON.stringify(d.groups.map((x) => x.procs)).includes('"action"')) ok('no individual helper process carries an action');
+    else fail('a helper process carries an action');
+  } finally { for (const k of Object.keys(keep)) platform[k] = keep[k]; }
+  const actSrc = read('lib/act.js');
+  if (!/helper/i.test((actSrc.match(/const ACTIONS = Object\.freeze\(\{[\s\S]*?\n\}\);/) || [''])[0].replace(/lose:[^\n]*|describe:[^\n]*|confirm:[^\n]*/g, ''))) ok('the action table has no entry for a helper process');
+  else fail('the action table mentions a helper process');
+
+  // ---- 4. the Docker advice card ----------------------------------------------------------------------------
+  const parse = mem.parseDockerSettings;
+  const p1 = parse('{"MemoryMiB": 8192, "other": 1}'), p2 = parse('{"memoryMiB": 4096}'), p3 = parse('not json'), p4 = parse('{"memoryMiB": "8"}'), p5 = parse('{"cpus": 4}'), p6 = parse('[1]'), p7 = parse('{"memoryMiB": 3}');
+  if (p1.memoryMiB === 8192 && p2.memoryMiB === 4096 && p3.ok === false && p4.memoryMiB === null && p5.memoryMiB === null && p6.ok === false && p7.memoryMiB === null) ok('Docker settings parse: MemoryMiB or memoryMiB, whatever the case; invalid JSON, a non-number, a missing key or an absurd value is no limit, never a guess');
+  else fail('the Docker settings parser is wrong', JSON.stringify([p1, p2, p3, p4, p5, p6, p7]));
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'reckon-docker-card-'));
+  try {
+    const none = mem.readDockerSettings({ home });
+    if (none.file === null && none.memoryMiB === null && none.why === 'absent') ok('a missing Docker settings file is tolerated: no file, no limit, "absent"');
+    else fail('a missing settings file was not tolerated', JSON.stringify(none));
+    const dir = path.join(home, 'Library', 'Group Containers', 'group.com.docker');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'settings.json'), '{"memoryMiB": 6144}');
+    const old = mem.readDockerSettings({ home });
+    fs.writeFileSync(path.join(dir, 'settings-store.json'), '{"MemoryMiB": 10240}');
+    const fresh = mem.readDockerSettings({ home });
+    fs.writeFileSync(path.join(dir, 'settings-store.json'), '{"cpus": 4}');
+    const fallback = mem.readDockerSettings({ home });
+    fs.writeFileSync(path.join(dir, 'settings-store.json'), '{{ broken');
+    const broken = mem.readDockerSettings({ home });
+    if (old.memoryMiB === 6144 && fresh.memoryMiB === 10240 && /settings-store\.json$/.test(fresh.file) && fallback.memoryMiB === 6144 && broken.memoryMiB === 6144) ok('settings-store.json is read first, settings.json is the fallback, and a store with no key or a broken one falls through to it');
+    else fail('the Docker settings file order is wrong', JSON.stringify([old, fresh, fallback, broken]));
+    fs.rmSync(path.join(dir, 'settings.json'));
+    const onlyBroken = mem.readDockerSettings({ home });
+    if (onlyBroken.memoryMiB === null && onlyBroken.why === 'unreadable') ok('a settings file that is there but unreadable says "unreadable", not "no limit configured"');
+    else fail('a broken settings file was misreported', JSON.stringify(onlyBroken));
+  } finally { fs.rmSync(home, { recursive: true, force: true }); }
+
+  const desktop = { pid: 50, ppid: 1, command: '/Applications/Docker.app/Contents/MacOS/com.docker.backend', family: 'Docker Desktop', rssKB: 300 * MB };
+  const vm = (kbMB) => ({ pid: 51, ppid: 50, command: '/System/Library/Frameworks/Virtualization.framework/Versions/A/XPCServices/com.apple.Virtualization.VirtualMachine.xpc/Contents/MacOS/com.apple.Virtualization.VirtualMachine', family: 'Apple VM (Docker/Claude)', rssKB: kbMB * MB });
+  const total = 16 * 1073741824;
+  const asked = [];
+  const card = await mem.dockerAdvice([desktop, vm(4096)], { totalBytes: total, settings: () => ({ file: '/x/settings-store.json', memoryMiB: 8192 }), containers: async () => { asked.push(1); return 0; } });
+  if (card && card.limitMiB === 8192 && card.limitPct === 50 && card.containers === 0 && card.vmMB === 4096 && /50% of this machine's 16 GB/.test(card.advice)
+    && /Settings > Resources/.test(card.changeAt) && /Settings > Resources > Advanced > Memory limit/.test(card.advice) && /Resource Saver/.test(card.advice) && !('action' in card)) ok('Docker card: the limit (8 GB), as a share of RAM (50%), 0 containers running, the exact Docker Desktop path (Settings > Resources) and the Resource Saver advice, and no action');
+  else fail('the Docker card is wrong', JSON.stringify(card));
+  const busy = await mem.dockerAdvice([desktop, vm(4096)], { totalBytes: total, settings: () => ({ file: '/x/s.json', memoryMiB: 12288 }), containers: async () => 3 });
+  if (busy.containers === 3 && busy.limitPct === 75 && /3 container\(s\) are running/.test(busy.advice) && /lower the limit/.test(busy.advice) && !/Turn on Resource Saver/.test(busy.advice)) ok('with containers running and a limit above half of RAM, the advice is to lower the limit, not to enable Resource Saver');
+  else fail('the busy-Docker advice is wrong', busy.advice);
+  asked.length = 0;
+  const asleep = await mem.dockerAdvice([desktop, vm(100)], { totalBytes: total, settings: () => ({ file: null, memoryMiB: null, why: 'absent' }), containers: async () => { asked.push(1); return 0; } });
+  if (asleep.asleep && asleep.containers === null && !asked.length && asleep.limitMiB === null && asleep.limitPct === null && /not found/.test(asleep.advice) && /asking would wake it/.test(asleep.advice)) ok('a sleeping Docker VM is not woken to count containers, and a missing settings file is said to be missing, not guessed');
+  else fail('the sleeping-Docker card is wrong', JSON.stringify([asleep, asked]));
+  const nokey = await mem.dockerAdvice([desktop, vm(2048)], { totalBytes: total, settings: () => ({ file: path.join(os.homedir(), 'Library/x.json'), memoryMiB: null, why: 'no-limit-key' }), containers: async () => 1 });
+  if (nokey.limitMiB === null && /has no memory limit/.test(nokey.advice) && !/\/Users\//.test(nokey.file || '')) ok('a settings file without the key says so, and the path is shown with ~ for the home folder');
+  else fail('the no-key card is wrong', JSON.stringify(nokey));
+  const absent = await mem.dockerAdvice([{ pid: 1, command: '/usr/bin/yes', family: 'yes', rssKB: 5000 }], { totalBytes: total });
+  const noVm = await mem.dockerAdvice([desktop], { totalBytes: total });
+  if (absent === null && noVm === null) ok('no Docker Desktop VM running, no card');
+  else fail('a Docker card appeared without a Docker VM');
+  const privacy = read('docs/PRIVACY.md'), readme = read('README.md');
+  if (/settings-store\.json/.test(privacy) && /group\.com\.docker/.test(privacy) && /memoryMiB/i.test(privacy)) ok('docs/PRIVACY.md names the Docker settings file, its folder and the one key read from it');
+  else fail('docs/PRIVACY.md does not document the Docker settings read');
+  if (/I need X GB/.test(readme) && /Docker Desktop/.test(readme)) ok('the README describes the plan and the Docker card');
+  else fail('the README does not describe the plan');
+}
+
 async function step(name, fn) {
   console.log('\n' + name);
   try { await fn(); }
@@ -3629,6 +3938,7 @@ async function phase4() {
   await step('corner', async () => { await cornerIsSafe(); });
   await step('open only', async () => { await openOnly(); });
   await step('actions', async () => { await actions(); });
+  await step('memory plan', async () => { await memoryPlan(); });
   await step('phase 4', async () => { await phase4(); });
   await step('agent skills', async () => { await agentSkills(); });
   await step('stray draw', async () => { noStrayDraw(); });

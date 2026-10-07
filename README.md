@@ -53,6 +53,12 @@ The same engine acts on disk, from the last deep scan, decided by the owner the 
 
 Rows can be ticked into a queue: one preview with the summed total, one confirmation, then one by one, each logged, stopping at the first one that is refused. After a run the screen shows free space before and after, read with a light `df`, not a new scan.
 
+**"I need X GB" (Memory tab).** Pick 2, 4 or 8 GB, or type your own, and reckon builds a plan from the rows that already have a button: it never invents an action, and only `high` and `medium` rows are in it. What comes back without a loss goes first (an Ollama model, orphaned tool servers, an idle AI session that has a resume command, simulators, a Docker VM with no container), then the stops that cannot be undone, and the apps whose quit asks to save go last, flagged "asks to save first". Each line says "up to N MB", which is what that row held when it was measured and never more, with a running total, and the list stops as soon as it reaches the gap between what you asked for and what is available now (`lib/headroom.js`). When the whole list cannot get there it says so: "these free up to X GB; you asked for Y GB; nothing else here is safe to stop". The plan itself runs nothing (`POST /api/act/plan`). **Review and do** hands it to the queue above: one summed preview, one Confirm, five seconds with Cancel, one by one with each target measured again at the click, stopping at the first refusal. The available memory is read after every step and the remaining steps are skipped, and said to be skipped, the moment it is enough. The result shows the real available memory before and after.
+
+Helpers are shown under their parent app as one row ("Orca: 7 processes, 410 MB"), expandable, and only the app row has the quit button. No helper has an action of its own.
+
+**Docker advice (Memory tab).** While Docker Desktop's VM is running, a text-only card shows the memory limit set for it (read from Docker Desktop's own settings file, read-only; see `docs/PRIVACY.md`), that limit as a share of this machine's RAM, how many containers are running (not asked while Docker is asleep, because asking would wake it), and where to change it: Docker Desktop > Settings > Resources. It has no button.
+
 That rule is why the interesting work is in the *judgement*, not in the deleting. A tool that deletes has to be conservative to be safe. A tool that only recommends can afford to say exactly what it found and exactly how sure it is.
 
 ### It measures itself
@@ -373,7 +379,7 @@ surface. Nothing else needs to change.
 - **Memory history dies with the process.** It lives in server memory, capped at 120 points.
 - **No login** — the server refuses any connection that is not loopback, and listens on
   `127.0.0.1` only. Do not expose it. This panel can see the whole machine, and that is a map
-  of it. The routes that act (`POST /api/act/preview`, `/api/act/run` and the two `/api/act/queue/*`) also demand the
+  of it. The routes that act (`POST /api/act/preview`, `/api/act/run`, `/api/act/plan` and the two `/api/act/queue/*`) also demand the
   exact Host, an Origin of its own when one is sent, and a random token made fresh each time
   the server starts, so another web page open in your browser cannot reach them.
 - **macOS and Windows. Linux is not written yet.** Every reading goes through `lib/platform`,
