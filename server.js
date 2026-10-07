@@ -9,6 +9,10 @@ const blocklist = require('./lib/blocklist');
 const network = require('./lib/network');
 const pressure = require('./lib/pressure');
 
+// ---- phase 1: open-only actions (separate block, to ease merging)
+const opener = require('./lib/open');
+// ---- end phase 1 require
+
 const PORT = process.env.PORT || 4127;
 const WEB = path.join(__dirname, 'web');
 
@@ -154,6 +158,17 @@ const server = http.createServer(async (req, res) => {
       blocklist.remove(body.domain);
       return json(res, await blocklist.collect());
     }
+
+    // ---- phase 1: open-only actions. The body is { id, target? }; only `reveal` takes a
+    // target, and only a path the last scan measured. Nothing here modifies anything.
+    if (route === '/api/open' && req.method === 'GET') return json(res, { available: opener.available() });
+    if (route === '/api/open' && req.method === 'POST') {
+      // TODO(merge): token guard from phase 0
+      const body = await readBody(req);
+      const r = await opener.open(body.id, body.target, { scanData: scan.readCache() });
+      return json(res, r, r.ok ? 200 : 400);
+    }
+    // ---- end phase 1 route
 
     res.writeHead(404); res.end('not found');
   } catch (e) {

@@ -1558,6 +1558,58 @@ async function step(name, fn) {
   catch (e) { fail(`${name} threw instead of reporting`, String((e && e.stack) || e).split('\n').slice(0, 3).join(' | ')); }
 }
 
+// Open-only actions: the table is closed, a path must have been measured, and the
+// Terminal opener carries nothing the browser could fill in.
+async function openOnly() {
+  const os = require('node:os');
+  const o = require('../lib/open');
+  const home = fs.realpathSync(os.homedir());
+  const banned = /^(rm|sudo|kill|killall|networksetup|osascript|sh|bash|zsh|do shell script)$/;
+
+  const ids = Object.keys(o.OPENERS).sort().join(',');
+  if (ids === 'activity,backup,login,reveal,storage,terminal') ok('the open-only table has exactly the six agreed entries');
+  else fail('the open-only table changed', ids);
+
+  const bad = [];
+  for (const [id, e] of Object.entries(o.OPENERS)) {
+    const argv = e.argv(id === 'reveal' ? path.join(home, 'x') : undefined);
+    if (argv[0] !== 'open' || argv.some((a) => banned.test(a))) bad.push(id);
+  }
+  if (!bad.length) ok('every opener is `open` and none builds rm, sudo, kill or networksetup');
+  else fail('an opener builds something other than a plain open', bad.join(', '));
+
+  const t = o.OPENERS.terminal;
+  const same = JSON.stringify(t.argv('rm -rf ~')) === JSON.stringify(t.argv()) && t.argv().length === 3;
+  if (same && o.resolve('terminal', 'rm -rf ~', { plat: 'darwin' }).ok === false) ok('the Terminal opener has no argument, and refuses one');
+  else fail('the Terminal opener can carry text');
+
+  // A folder inside home that the scan "measured", one inside home it did not, and one outside home.
+  const dir = fs.mkdtempSync(path.join(home, '.reckon-check-'));
+  try {
+    const link = path.join(dir, 'link');
+    fs.symlinkSync('/etc', link);
+    const scanData = { targets: [{ path: dir }, { path: link }], homeTop: [], repos: { repos: [] } };
+    const r = (t, d = scanData) => o.resolve('reveal', t, { scanData: d, plat: 'darwin' });
+    if (r(dir).ok && r(dir).argv.join(' ') === `open -R ${fs.realpathSync(dir)}`) ok('reveal accepts a path the scan measured');
+    else fail('reveal refused a measured path', JSON.stringify(r(dir)));
+    if (!r(path.join(dir, 'other')).ok && !r(os.tmpdir()).ok) ok('reveal refuses a path the scan did not measure');
+    else fail('reveal accepted an unmeasured path');
+    if (!r('/etc').ok && !r('/etc', { targets: [{ path: '/etc' }] }).ok) ok('reveal refuses a path outside home, even when listed');
+    else fail('reveal accepted a path outside home');
+    if (!r(link).ok) ok('reveal refuses a symlink that leads outside home');
+    else fail('reveal followed a symlink out of home');
+    if (!r(dir, null).ok && !r('relative/path').ok && !o.resolve('reveal', undefined, { scanData, plat: 'darwin' }).ok) ok('reveal refuses with no scan, a relative path or no target');
+    else fail('reveal accepted a missing scan or a malformed target');
+    if (!o.resolve('activity', dir, { plat: 'darwin' }).ok) ok('only reveal takes a target');
+    else fail('a no-target opener accepted a target');
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+
+  if (!o.resolve('unknown', null, { plat: 'darwin' }).ok && !o.resolve('__proto__', null, { plat: 'darwin' }).ok) ok('an id outside the table is refused');
+  else fail('an unknown opener id was accepted');
+  if (o.available('win32').length === 0 && o.available('linux').length === 0 && !o.resolve('terminal', null, { plat: 'win32' }).ok) ok('off macOS there are no openers, so the UI draws no buttons');
+  else fail('openers are offered off macOS');
+}
+
 (async () => {
   await step('requires', async () => { await requires(); });
   await step('any platform', async () => { await loadsOnAnyPlatform(); });
@@ -1582,6 +1634,7 @@ async function step(name, fn) {
   await step('native pet', async () => { await nativePet(); });
   await step('watch', async () => { await watchDecides(); });
   await step('corner', async () => { await cornerIsSafe(); });
+  await step('open only', async () => { await openOnly(); });
   await step('agent skills', async () => { await agentSkills(); });
   if (!process.env.RECKON_CHECK_CHILD) await step('other platforms', asUnsupportedPlatform);
   console.log(failures ? `\n${failures} FAILURE(S)\n` : '\nall checks passed\n');
