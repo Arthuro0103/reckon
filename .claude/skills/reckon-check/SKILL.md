@@ -18,6 +18,7 @@ These apply to every reckon skill, without exception.
 3. **Write only inside `~/.cache/reckon/`.** The one exception is `./reckon-report.txt`, from `reckon-report`. Reading those files is fine. Deleting them is not.
 4. **Do not touch** `web/pet.js`, `native/pet.swift`, `reckon.config.json`, the speed test (`POST /api/network/speed`) or the blocklist routes (`/api/blocklist/*`).
 5. **No push and no `npm publish`.** Everything you write in this repo is in English.
+6. **Never act through the panel.** reckon can now quit an app, stop a process or shut simulators down, from a fixed table and only after a click. That click is the human's. Never call `/api/act/*`, never click "Do" or "Confirm", never script the page. Point to the row; the human clicks.
 <!-- hard-rules:end -->
 
 ## Run

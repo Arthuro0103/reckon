@@ -8,6 +8,9 @@ const dns = require('./lib/dns');
 const blocklist = require('./lib/blocklist');
 const network = require('./lib/network');
 const pressure = require('./lib/pressure');
+// ---- phase 2: action engine (requires) -------------------------------------
+const act = require('./lib/act');
+// ---- end phase 2 requires ---------------------------------------------------
 
 const PORT = process.env.PORT || 4127;
 const WEB = path.join(__dirname, 'web');
@@ -78,13 +81,38 @@ const server = http.createServer(async (req, res) => {
       if (!OPENED.groups) OPENED.groups = groups;   // the zero mark for "what grew since you opened"
       HISTORY.push({ t: Date.now(), vm: d.memory.vm, swap: d.memory.swap, groups });
       while (HISTORY.length > MAX_POINTS) HISTORY.shift();
+      act.remember('memory', [...(d.memory.groups || []), ...(d.memory.rows || [])]);   // phase 2
       return json(res, { ...d, history: HISTORY, opened: OPENED });
     }
 
     // The Pressure tab. Cheap — one `ps`, one `launchctl list`, one `lsof` and
     // a third of a second of deliberate arithmetic — but the arithmetic is the
     // point, so it is behind its own route and never runs on load.
-    if (route === '/api/pressure') return json(res, await pressure.collect());
+    if (route === '/api/pressure') {
+      const d = await pressure.collect();
+      act.remember('pressure', d.rows);   // phase 2: the ids a click may name
+      return json(res, d);
+    }
+
+    // ---- phase 2: action engine routes ---------------------------------------
+    // The browser sends { action, id } and nothing else; lib/act.js finds the id
+    // in the readings above, measures it again and runs only from its own table.
+    // Agents never call these: only a person clicking "Do" in the panel does.
+    if (route === '/api/act/token' && req.method === 'GET') {
+      const token = act.tokenFor(req, res, PORT);
+      return token ? json(res, { token }) : undefined;
+    }
+    if (route === '/api/act/preview' && req.method === 'POST') {
+      if (!act.requireToken(req, res, PORT)) return;   // MERGE: unify with phase 0 token guard
+      const body = await readBody(req);
+      return json(res, await act.preview(body));
+    }
+    if (route === '/api/act/run' && req.method === 'POST') {
+      if (!act.requireToken(req, res, PORT)) return;   // MERGE: unify with phase 0 token guard
+      const body = await readBody(req);
+      return json(res, await act.run(body));
+    }
+    // ---- end phase 2 routes ----------------------------------------------------
 
     if (route === '/api/cache') {
       const c = scan.readCache();

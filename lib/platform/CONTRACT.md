@@ -94,6 +94,11 @@ decision and belongs to the caller. `[]` on failure.
 `selfProcess().elapsed`, which is a display string. `null` where the platform does not
 publish a start time.
 
+`startedAt` (optional) is the absolute start time in epoch milliseconds, to the second, or
+`null`. `ageS` drifts by however long the reading took; `startedAt` does not, and it is what
+`lib/act.js` uses to prove that a pid is still the process that was measured and not a
+recycled number. A platform without it falls back to `ageS` with a wider tolerance.
+
 `tty` is the controlling terminal, or **`null` for none**. Never the literal `??` that `ps`
 prints: a caller reading that sees a terminal named `??`.
 
@@ -185,6 +190,22 @@ The child is started without a shell and its stdin stays open; that open pipe is
 knows the watcher is alive, and when it closes, however the watcher ended, the pet leaves.
 `stop()` closes it. Only `reckon watch --pet` calls this. A platform without it still gets the
 log, the state file and the corner window.
+
+### `memoryPressure()` → object | null · **light** · OPTIONAL
+```js
+{ level: 2, label: 'warning' }   // 1 normal · 2 warning · 4 critical
+```
+The kernel's own verdict on memory, the number the system itself acts on. `null` when it
+cannot be read. The Memory tab uses it as its headline; without it the tab says so.
+
+### `appBundle(command)` → object | null · **light** · OPTIONAL
+```js
+{ appPath: '/Applications/Google Chrome.app', bundleId: 'com.google.Chrome', name: 'Google Chrome' }
+```
+The OUTERMOST app bundle a process's executable lives in, and that bundle's id read from its
+own `Info.plist`. `null` for a process that is not inside an app, or whose bundle id cannot be
+read. It is a reading: the only thing that acts on the answer is `lib/act.js`, and only after a
+click. A platform without it gets no "quit the app" button.
 
 ### `selfProcess(pid)` → object | null · **light**
 ```js

@@ -248,14 +248,53 @@ function blocklistSieve() {
   if (!bad) ok(`the domain sieve handles all ${cases.length} cases`);
 }
 
-// 8. Nothing destructive runs on its own, and the server is loopback-only.
+// 8. Nothing changes the machine outside lib/act.js, and the server is loopback-only.
+//    The old check was one regex for `execFile('rm'`; it could not see `run('kill', …)`,
+//    which is exactly the shape every command here takes. This one knows the shapes the
+//    codebase actually uses, and it is run against planted samples first, because a
+//    checker that has never failed proves nothing.
+const STATE_CHANGING = [
+  [/\b(?:run|sh|execFile|execFileSync|spawn|spawnSync|exec|execSync)\(\s*['"`](?:\/usr\/bin\/|\/bin\/|\/usr\/sbin\/)?(kill|killall|pkill|xcrun|trash|rm|rmdir|sudo|purge|shutdown|reboot)\b/, 'runs a state-changing command'],
+  // These two are read here every day, so only their READING verbs are allowed.
+  [/\brun\(\s*['"]networksetup['"],\s*\[\s*['"](?!-list|-get)/, 'changes the network settings'],
+  [/\brun\(\s*['"]tmutil['"],\s*\[\s*['"](?!destinationinfo|latestbackup|listbackups|listlocalsnapshots|machinedirectory)/, 'changes Time Machine'],
+  [/\b(?:run|execFile|spawn)\(\s*['"]osascript['"][^)]*\bquit\b/, 'asks an app to quit'],
+  [/\b(?:run|sh)\(\s*['"`][^'"`]*\b(?:kill|killall|pkill|simctl\s+shutdown|rm\s+-|sudo)\b/, 'runs a state-changing shell line'],
+  [/\brun\(\s*['"]launchctl['"],\s*\[\s*['"](?!list['"])/, 'changes a launchd job'],
+  [/\bprocess\.kill\(\s*[^,()]+(?:\)|,(?!\s*0\s*\))[^)]*\))/, 'signals a pid'],
+];
+function stateChangingIn(src) {
+  // Comments say what a command does; only code runs it.
+  const code = src.replace(/\/\*[\s\S]*?\*\//g, '').split('\n').map((l) => l.replace(/^\s*\/\/.*$/, '').replace(/\s\/\/ .*$/, '')).join('\n');
+  return STATE_CHANGING.filter(([re]) => re.test(code)).map(([, why]) => why);
+}
+
 function safety() {
-  const suspect = /execFile\(\s*['"](rm|sudo|networksetup)\b|exec\(\s*['"]\s*(rm|sudo)\b/;
+  const samples = [
+    "await run('kill', ['-9', pid]);", "run('/bin/rm', ['-rf', p])", "execFile('sudo', ['purge'])",
+    "run('osascript', ['-e', 'tell application id \"x\" to quit'])", "sh(`kill ${pid}`)",
+    "process.kill(pid, 'SIGKILL')", "process.kill(pid)", "run('launchctl', ['bootout', 'gui/501/x'])",
+    "run('xcrun', ['simctl', 'shutdown', 'all'])", "run('networksetup', ['-setdnsservers', 'Wi-Fi', 'Empty'])",
+    "run('tmutil', ['deletelocalsnapshots', '/'])",
+  ];
+  const missed = samples.filter((s) => !stateChangingIn(s).length);
+  const clean = ["run('launchctl', ['list'])", "process.kill(pid, 0)", "run('networksetup', ['-getdnsservers', n])", "run('tmutil', ['latestbackup'])", "run('osascript', ['-e', script, title])", "// run('kill', [pid])"];
+  const flagged = clean.filter((s) => stateChangingIn(s).length);
+  if (!missed.length && !flagged.length) ok(`the state-change detector catches all ${samples.length} planted commands and none of the ${clean.length} readings`);
+  else fail('the state-change detector is wrong', `missed: ${missed.join(' | ')} flagged: ${flagged.join(' | ')}`);
+
+  const files = ['server.js', ...libFiles(), 'bin/reckon', 'bin/report.js', 'bin/scan.js'].filter((f) => fs.existsSync(path.join(ROOT, f)));
   let dirty = 0;
-  for (const f of ['server.js', ...libFiles()]) {
-    if (suspect.test(read(f))) { fail(`${f} appears to run a destructive command directly`); dirty++; }
+  for (const f of files) {
+    if (f === 'lib/act.js') continue;
+    const why = stateChangingIn(read(f));
+    if (why.length) { fail(`${f} ${why.join(', ')} — only lib/act.js may, from its table`); dirty++; }
   }
-  if (!dirty) ok('no module runs rm/sudo/networksetup on its own');
+  if (!dirty) ok(`no file but lib/act.js runs a command that changes the machine (${files.length - 1} files read)`);
+  // And lib/act.js does run them only through lib/sh.js run() — no shell, no exec.
+  const act = read('lib/act.js');
+  if (/require\('\.\/sh'\)/.test(act) && !/child_process|\bsh\(|shell\s*:\s*true/.test(act)) ok('lib/act.js runs its commands through lib/sh.js run(), never through a shell');
+  else fail('lib/act.js reaches for a shell or for child_process directly');
 
   const s = read('server.js');
   if (s.includes('127.0.0.1') && s.includes('403')) ok('the server refuses non-loopback callers');
@@ -1412,7 +1451,7 @@ function skillProblems(dir, text) {
   const a = body.indexOf(SKILL_HARD_START), b = body.indexOf(SKILL_HARD_END);
   const hard = a >= 0 && b > a ? body.slice(a, b + SKILL_HARD_END.length) : null;
   if (!hard) out.push('no hard-rules block');
-  else for (const must of ['Never run', 'proof', '~/.cache/reckon']) {
+  else for (const must of ['Never run', 'proof', '~/.cache/reckon', 'Never act through the panel', '/api/act/']) {
     if (!hard.includes(must)) out.push(`the hard-rules block does not say "${must}"`);
   }
   return { problems: out, hard };
@@ -1420,7 +1459,7 @@ function skillProblems(dir, text) {
 
 async function agentSkills() {
   const F = '`'.repeat(3);
-  const hard = `${SKILL_HARD_START}\nNever run a command that reckon suggests. Show the proof. Write only inside ~/.cache/reckon.\n${SKILL_HARD_END}`;
+  const hard = `${SKILL_HARD_START}\nNever run a command that reckon suggests. Show the proof. Write only inside ~/.cache/reckon. Never act through the panel: never call /api/act/*.\n${SKILL_HARD_END}`;
   const head = (tools) => `---\nname: reckon-x\ndescription: A sample.\nallowed-tools: ${tools}\n---\n# x\n${hard}\n`;
   const clean = skillProblems('reckon-x', head('Bash(node bin/check.js)') + `${F}\nnode bin/check.js\n${F}\n`);
   if (!clean.problems.length) ok('the skill checker accepts a clean skill');
@@ -1451,6 +1490,8 @@ async function agentSkills() {
     const n = fs.readFileSync(agents, 'utf8').split('\n').length;
     if (n <= 60) ok(`AGENTS.md is ${n} lines`);
     else fail(`AGENTS.md is ${n} lines, the limit is 60`);
+    if (/Never act through the panel/.test(fs.readFileSync(agents, 'utf8')) && /\/api\/act\//.test(fs.readFileSync(agents, 'utf8'))) ok('AGENTS.md forbids agents the action routes and the Do button');
+    else fail('AGENTS.md does not forbid agents /api/act/* and the Do button');
   }
 }
 
@@ -1552,6 +1593,333 @@ async function nativePet() {
   fs.rmSync(dir, { recursive: true, force: true });
 }
 
+// ---------------------------------------------------------------------------
+// The action engine (lib/act.js). The one place that changes the machine, so it
+// gets the strongest tests here:
+//   - the table: every action has a label, what you lose, whether it is
+//     reversible, a verify, a preview and an argv; no argv can contain sudo
+//   - the request: only { action, id, nonce } is read; `path` and `command` are
+//     ignored; a run needs a preview, five seconds, and the same target
+//   - the race: a pid that is now another process is refused
+//   - the routes: wrong Host, foreign Origin or no token is a 403
+//   - for real, in a sandbox: a child process with HOME in a temporary folder
+//     kills only `sleep` processes it spawned itself, and the real
+//     ~/.cache/reckon is not touched.
+// Everything except the sandbox runs against a FAKE process list and a dry run:
+// no real process is ever looked up by these tests, let alone signalled.
+// ---------------------------------------------------------------------------
+async function actions() {
+  const act = require(path.join(ROOT, 'lib/act.js'));
+
+  // --- the table ---------------------------------------------------------
+  const sample = {
+    kind: 'swarm', name: 'Sample', appPath: '/Applications/Sample.app', bundleId: 'com.example.sample',
+    pids: [{ pid: 4242, comm: '/usr/bin/yes', startedAt: 0 }], main: { pid: 4242, comm: 'x', startedAt: 0 }, roots: [],
+  };
+  const check = { alive: [{ pid: 4242 }, { pid: 4243 }], roots: [{ pid: 4242 }] };
+  const names = Object.keys(act.ACTIONS);
+  for (const name of names) {
+    const a = act.ACTIONS[name];
+    const missing = ['label', 'kind'].filter((k) => typeof a[k] !== 'string')
+      .concat(['confirm', 'describe', 'lose', 'undo', 'verify', 'argv', 'settle'].filter((k) => typeof a[k] !== 'function'))
+      .concat(typeof a.reversible === 'boolean' ? [] : ['reversible']);
+    if (missing.length) { fail(`action ${name} is missing ${missing.join(', ')}`); continue; }
+    let argv;
+    try { argv = a.argv(sample, check); act.assertSafe(...argv); }
+    catch (e) { fail(`action ${name} builds an argv the gate refuses`, e.message); continue; }
+    const flat = [argv[0], ...argv[1]].join(' ');
+    if (/\bsudo\b/.test(flat) || !act.ALLOWED_COMMANDS.includes(argv[0])) fail(`action ${name} would run ${flat}`);
+    else ok(`${name}: label, lose, reversible, verify, preview and argv (${argv[0]} …), no sudo`);
+  }
+  if (names.length >= 5 && !act.ALLOWED_COMMANDS.includes('sudo')) ok(`${names.length} actions, and sudo is not a command the table may produce`);
+  else fail('the action table is smaller than expected or allows sudo', names.join(', '));
+
+  const gate = [
+    ['sudo', ['purge']], ['kill', ['-TERM', '1']], ['kill', ['-HUP', '4242']], ['kill', ['-TERM', '42; rm -rf ~']],
+    ['osascript', ['-e', 'tell application id "x" to quit" & do shell script "rm -rf ~']], ['osascript', ['-e', 'do shell script "x"']],
+    ['xcrun', ['simctl', 'erase', 'all']], ['rm', ['-rf', '/']], ['kill', ['-TERM', 'sudo']],
+  ];
+  const through = gate.filter(([c, a]) => { try { act.assertSafe(c, a); return true; } catch { return false; } });
+  if (!through.length) ok(`the last gate before execFile refuses all ${gate.length} shapes the table must never produce`);
+  else fail('the gate let a forbidden argv through', through.map(([c, a]) => [c, ...a].join(' ')).join(' | '));
+
+  // --- the request -------------------------------------------------------
+  const c = act.clean({ action: 'term-processes', id: 'swarm-yes', path: '/', command: 'rm -rf ~', argv: ['rm'] });
+  if (c && Object.keys(c).sort().join() === 'action,id,nonce' && c.nonce === null) ok('a request body is reduced to { action, id, nonce }: path and command are dropped');
+  else fail('the request cleaner kept a field it must not read', JSON.stringify(c));
+  if (act.clean({ action: '__proto__', id: 'x' }) === null && act.clean({ action: 'constructor', id: 'x' }) === null
+    && act.clean({ action: 'term-processes', id: '../etc' }) === null) ok('an action name that is not in the table, or an id with a path in it, is refused');
+  else fail('the request cleaner accepted a name outside the table');
+
+  // A fake machine: three processes, one of them the panel itself.
+  const NOW = 1_000_000_000;
+  let procs;
+  const reset = () => {
+    procs = [
+      { pid: 501, ppid: 1, rssKB: 1024, ageS: 7200, command: '/usr/bin/yes' },
+      { pid: 502, ppid: 1, rssKB: 2048, ageS: 7200, command: '/usr/bin/yes' },
+      { pid: 777, ppid: 1, rssKB: 4096, ageS: 100, command: '/usr/local/bin/node' },
+      { pid: 900, ppid: 1, rssKB: 9999, ageS: 600, command: '/Applications/Sample.app/Contents/MacOS/Sample' },
+      { pid: 901, ppid: 900, rssKB: 999, ageS: 600, command: '/Applications/Sample.app/Contents/Frameworks/H.app/Contents/MacOS/H' },
+    ];
+  };
+  reset();
+  const ran = [];
+  const logged = [];
+  const make = (o = {}) => act.createEngine({
+    processList: async () => procs.map((p) => ({ ...p })),
+    appBundle: async (comm) => (String(comm).startsWith('/Applications/Sample.app/') ? { appPath: '/Applications/Sample.app', bundleId: 'com.example.sample', name: 'Sample' } : null),
+    runningContainers: async () => 0, memoryStats: async () => null, memoryPressure: async () => null,
+    exec: async (cmd, args) => { ran.push([cmd, ...args]); return { ok: true, out: '', erro: null }; },
+    log: { append: (e) => { logged.push(e); return true; } },
+    now: () => NOW, selfPid: 777, dryRun: true, minDelayMs: 0, killAfterMs: 0, settleMs: 0, ...o,
+  });
+  const ident = (p) => ({ pid: p.pid, comm: p.command, startedAt: NOW - p.ageS * 1000 });
+  const swarmRow = (over = {}) => ({ id: 'swarm-yes', title: '2 copies of yes', confidence: 'high', lose: 'nothing',
+    action: { id: 'term-processes', label: 'Stop them' }, target: { kind: 'swarm', pids: procs.slice(0, 2).map(ident) }, ...over });
+
+  let e = make();
+  const unknown = await e.preview({ action: 'term-processes', id: 'swarm-yes' });
+  if (!unknown.ok && /not in the last reading/.test(unknown.refused)) ok('an id the server never measured is refused');
+  else fail('an id the server never measured was accepted', JSON.stringify(unknown));
+
+  e.remember('pressure', [swarmRow({ confidence: 'low' })]);
+  const low = await e.preview({ action: 'term-processes', id: 'swarm-yes' });
+  if (!low.ok) ok('a low-confidence row gets no action, even if it carries one');
+  else fail('a low-confidence row was made clickable');
+
+  e.remember('pressure', [swarmRow()]);
+  const p1 = await e.preview({ action: 'term-processes', id: 'swarm-yes', path: '/', command: 'rm -rf ~' });
+  if (p1.ok && p1.nonce && p1.proof && p1.lose && typeof p1.reversible === 'boolean' && p1.mb != null) ok('the preview carries what, how much, proof measured now, what you lose and whether it is reversible');
+  else fail('the preview is incomplete', JSON.stringify(p1));
+  const noNonce = await e.run({ action: 'term-processes', id: 'swarm-yes' });
+  if (!noNonce.ok && /preview/.test(noNonce.refused)) ok('a run without a preview is refused');
+  else fail('a run without a preview went ahead');
+  const r1 = await e.run({ action: 'term-processes', id: 'swarm-yes', nonce: p1.nonce, path: '/', command: 'rm -rf ~' });
+  if (r1.ok && r1.dryRun && r1.argv.join(' ') === 'kill -TERM 501 502' && !ran.length) ok('dry run: the argv comes from the table (kill -TERM 501 502), the body\'s path and command are ignored, nothing ran');
+  else fail('the dry run is wrong', JSON.stringify(r1) + ' ran=' + JSON.stringify(ran));
+  const again = await e.run({ action: 'term-processes', id: 'swarm-yes', nonce: p1.nonce });
+  if (!again.ok) ok('a nonce works once');
+  else fail('a nonce was accepted twice');
+
+  // The countdown is a rule on the server, not only on the screen.
+  const slow = make({ minDelayMs: 5000 });
+  slow.remember('pressure', [swarmRow()]);
+  const ps = await slow.preview({ action: 'term-processes', id: 'swarm-yes' });
+  const early = await slow.run({ action: 'term-processes', id: 'swarm-yes', nonce: ps.nonce });
+  if (!early.ok && /Too soon/.test(early.refused)) ok('a run sooner than five seconds after its preview is refused by the server');
+  else fail('the server ran an action before the countdown could finish', JSON.stringify(early));
+
+  // --- the race ----------------------------------------------------------
+  e = make();
+  e.remember('pressure', [swarmRow()]);
+  procs[1].ageS = 5;   // pid 502 now belongs to a process started 5 s ago
+  const recycled = await e.preview({ action: 'term-processes', id: 'swarm-yes' });
+  if (!recycled.ok && /different process/.test(recycled.refused)) ok('a pid now worn by a younger process is refused (same number, other start time)');
+  else fail('a recycled pid was accepted', JSON.stringify(recycled));
+  // With an absolute start time (macOS publishes one), that is what decides, not the age.
+  reset();
+  procs.forEach((p) => { p.startedAt = NOW - p.ageS * 1000; });
+  e.remember('pressure', [swarmRow({ target: { kind: 'swarm', pids: procs.slice(0, 2).map((p) => ({ pid: p.pid, comm: p.command, startedAt: p.startedAt })) } })]);
+  const sameAbs = await e.preview({ action: 'term-processes', id: 'swarm-yes' });
+  procs[0].startedAt += 60000;
+  const otherAbs = await e.preview({ action: 'term-processes', id: 'swarm-yes' });
+  if (sameAbs.ok && !otherAbs.ok) ok('an absolute start time a minute off is a different process, however long the reading took');
+  else fail('the absolute start time is not what decides identity', JSON.stringify([sameAbs.refused, otherAbs.refused]));
+  reset();
+  e.remember('pressure', [swarmRow()]);
+  procs[0].command = '/bin/zsh';
+  const renamed = await e.preview({ action: 'term-processes', id: 'swarm-yes' });
+  if (!renamed.ok) ok('a pid now running another executable is refused');
+  else fail('a pid running another executable was accepted');
+  reset();
+  e.remember('pressure', [swarmRow()]);
+  const p2 = await e.preview({ action: 'term-processes', id: 'swarm-yes' });
+  procs.splice(1, 1);   // 502 exits between the preview and the click
+  const moved = await e.run({ action: 'term-processes', id: 'swarm-yes', nonce: p2.nonce });
+  if (!moved.ok && /changed between the preview and now/.test(moved.refused)) ok('the target changed between preview and click: refused, and the refusal is logged');
+  else fail('a target that changed after the preview was acted on', JSON.stringify(moved));
+  if (logged.some((l) => l.refused && /changed/.test(l.refused))) ok('the refusal went to actions.log');
+  else fail('a refusal was not logged');
+  reset();
+  procs[0].ppid = 4000;
+  e.remember('pressure', [swarmRow()]);
+  const adopted = await e.preview({ action: 'term-processes', id: 'swarm-yes' });
+  if (!adopted.ok) ok('a swarm member that has a parent again is refused');
+  else fail('a swarm member with a living parent was accepted');
+  reset();
+
+  // The panel never signals itself or what it runs inside.
+  e.remember('pressure', [swarmRow({ target: { kind: 'test', pids: [ident(procs[2])] } })]);
+  const self = await e.preview({ action: 'term-processes', id: 'swarm-yes' });
+  if (!self.ok && /reckon itself/.test(self.refused)) ok('reckon refuses to signal its own pid');
+  else fail('reckon offered to signal itself', JSON.stringify(self));
+
+  // SIGKILL only as its own click, after a polite stop.
+  const kill0 = await e.preview({ action: 'kill-processes', id: 'swarm-yes' });
+  if (!kill0.ok && /polite stop/.test(kill0.refused)) ok('a forced stop with no polite stop before it is refused');
+  else fail('SIGKILL was offered without a SIGTERM first');
+
+  // --- apps --------------------------------------------------------------
+  const appRow = (over = {}) => ({ id: 'group-sample', title: 'Sample', confidence: 'medium', lose: 'x',
+    action: { id: 'quit-app', label: 'Quit Sample' },
+    target: { kind: 'app', appPath: '/Applications/Sample.app', bundleId: 'com.example.sample', name: 'Sample', main: ident(procs[3]), pids: [ident(procs[3]), ident(procs[4])] }, ...over });
+  e = make();
+  e.remember('memory', [appRow()]);
+  const pa = await e.preview({ action: 'quit-app', id: 'group-sample' });
+  const ra = pa.ok && await e.run({ action: 'quit-app', id: 'group-sample', nonce: pa.nonce });
+  if (ra && ra.dryRun && ra.argv.join(' ') === 'osascript -e tell application id "com.example.sample" to quit') ok('quit-app asks the app by bundle id to quit, gracefully, through osascript');
+  else fail('quit-app built the wrong argv', JSON.stringify(ra || pa));
+  e.remember('memory', [appRow({ target: { ...appRow().target, bundleId: 'com.apple.finder' } })]);
+  const finder = await e.preview({ action: 'quit-app', id: 'group-sample' });
+  if (!finder.ok) ok('the desktop itself (Finder, Dock, loginwindow…) is never quit');
+  else fail('the engine offered to quit Finder');
+  e.remember('memory', [appRow({ target: { ...appRow().target, bundleId: 'x" to quit\ndo shell script "rm' } })]);
+  const inj = await e.preview({ action: 'quit-app', id: 'group-sample' });
+  if (!inj.ok) ok('a bundle id with a quote in it is refused before it can reach AppleScript');
+  else fail('an injected bundle id reached the preview');
+  const hosting = make({ selfPid: 777 });
+  procs[2].ppid = 901;   // reckon now runs inside the app
+  hosting.remember('memory', [appRow()]);
+  const host = await hosting.preview({ action: 'quit-app', id: 'group-sample' });
+  if (!host.ok && /reckon itself/.test(host.refused)) ok('the app that runs reckon is never quit from reckon');
+  else fail('reckon offered to quit the app it runs inside', JSON.stringify(host));
+  reset();
+  const busy = make({ runningContainers: async () => 2 });
+  busy.remember('memory', [appRow({ id: 'docker-idle', action: { id: 'quit-docker', label: 'Quit Docker' } })]);
+  const dk = await busy.preview({ action: 'quit-docker', id: 'docker-idle' });
+  if (!dk.ok && /running now/.test(dk.refused)) ok('Docker Desktop is not quit while a container runs (measured at the click)');
+  else fail('Docker Desktop was offered with containers running', JSON.stringify(dk));
+  if (!ran.length) ok('no test above ran a single command: the fake machine and the dry run held');
+  else fail('a test ran a command', JSON.stringify(ran));
+
+  // --- the routes --------------------------------------------------------
+  const call = (headers) => {
+    const out = { status: null };
+    const res = { writeHead: (s) => { out.status = s; }, end: () => {} };
+    out.passed = act.requireToken({ headers }, res, 4127);
+    return out;
+  };
+  const token = act.tokenFor({ headers: { host: '127.0.0.1:4127' } }, { writeHead() {}, end() {} }, 4127);
+  const bad = [
+    { host: 'evil.test', 'x-reckon-token': token },
+    { host: 'evil.test:4127', 'x-reckon-token': token },
+    { host: '127.0.0.1:4127' },
+    { host: '127.0.0.1:4127', 'x-reckon-token': 'nope' },
+    { host: '127.0.0.1:4127', origin: 'http://evil.test', 'x-reckon-token': token },
+  ].map(call);
+  if (bad.every((b) => b.status === 403 && b.passed === false)) ok('wrong Host, missing or wrong token, foreign Origin: all 403');
+  else fail('an action route let a bad request through', JSON.stringify(bad));
+  const good = call({ host: '127.0.0.1:4127', origin: 'http://127.0.0.1:4127', 'x-reckon-token': token });
+  if (good.passed === true && good.status === null) ok('the panel\'s own request, with its token, passes');
+  else fail('the panel\'s own request was refused');
+  const t2 = act.tokenFor({ headers: { host: 'evil.test:4127' } }, { writeHead() {}, end() {} }, 4127);
+  if (t2 === null && typeof token === 'string' && token.length >= 32) ok('the token is handed only to the panel\'s own Host');
+  else fail('the token was handed to another Host');
+  const srv = read('server.js');
+  const guarded = ['/api/act/preview', '/api/act/run'].every((r) => new RegExp(`'${r.replace(/\//g, '\\/')}' && req\\.method === 'POST'\\) \\{\\s*if \\(!act\\.requireToken\\(req, res, PORT\\)\\) return;`).test(srv));
+  if (guarded) ok('both action routes are POST and check the token before reading the body');
+  else fail('an action route reads its body before the token check, or is not POST-only');
+
+  // --- for real, in a sandbox -------------------------------------------
+  await actSandbox();
+}
+
+// A child process with HOME (and so ~/.cache/reckon) in a fresh temporary folder.
+// It spawns its own `sleep` processes, and the process list it gives the engine is
+// filtered to exactly those pids: even a bug in the engine could not reach anything else.
+async function actSandbox() {
+  if (process.platform === 'win32') { ok('(sandboxed kill test not run on Windows: no kill or ps)'); return; }
+  if (process.env.RECKON_CHECK_CHILD) { ok('(sandboxed kill test runs once, in the parent suite)'); return; }
+  const os = require('node:os');
+  const { spawnSync } = require('node:child_process');
+  const realLog = path.join(os.homedir(), '.cache', 'reckon', 'actions.log');
+  const stamp = (f) => { try { const s = fs.statSync(f); return `${s.size}:${s.mtimeMs}`; } catch { return 'absent'; } };
+  const before = stamp(realLog);
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'reckon-act-check-'));
+  const script = `
+    const os = require('node:os'), path = require('node:path'), fs = require('node:fs');
+    const { spawn } = require('node:child_process');
+    const ROOT = ${JSON.stringify(ROOT)};
+    if (os.homedir() !== process.env.HOME || !/reckon-act-check-/.test(os.homedir())) { console.log(JSON.stringify({ floor: 'HOME is not the sandbox' })); process.exit(0); }
+    const { run } = require(path.join(ROOT, 'lib/sh.js'));
+    const act = require(path.join(ROOT, 'lib/act.js'));
+    const { createLog } = require(path.join(ROOT, 'lib/actlog.js'));
+    const kids = [];
+    const mine = new Set();
+    const own = (c) => { kids.push(c); mine.add(c.pid); return c; };
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    // Only this sandbox's own children, by pid, and nothing else on the machine.
+    async function list() {
+      if (!mine.size) return [];
+      const r = await run('ps', ['-o', 'pid=,ppid=,rss=,etime=,comm=', '-p', [process.pid, ...mine].join(',')], { timeout: 5000 });
+      const out = [];
+      for (const l of String(r.out || '').split('\\n')) {
+        const m = /^\\s*(\\d+)\\s+(\\d+)\\s+(\\d+)\\s+(\\S+)\\s+(.*)$/.exec(l);
+        if (!m) continue;
+        // Its own children, plus itself: a list that is never empty, so "all gone" is a reading and not a failure.
+        if (+m[1] !== process.pid && (!mine.has(+m[1]) || +m[2] !== process.pid)) continue;
+        const t = /^(?:(\\d+)-)?(?:(\\d+):)?(\\d+):(\\d+)$/.exec(m[4]);
+        const ageS = t ? (+(t[1] || 0)) * 86400 + (+(t[2] || 0)) * 3600 + (+t[3]) * 60 + (+t[4]) : null;
+        out.push({ pid: +m[1], ppid: +m[2], rssKB: +m[3], ageS, command: m[5].trim() });
+      }
+      return out;
+    }
+    (async () => {
+      const res = {};
+      try {
+        const a = own(spawn('sleep', ['60'], { stdio: 'ignore' }));
+        const b = own(spawn('sleep', ['60'], { stdio: 'ignore' }));
+        // A sleep that ignores the polite stop: SIG_IGN survives exec, so this is still sleep.
+        const c = own(spawn('/bin/sh', ['-c', "trap '' TERM; exec sleep 60"], { stdio: 'ignore' }));
+        await sleep(400);
+        const e = act.createEngine({ processList: list, selfPid: process.pid, minDelayMs: 0, killAfterMs: 0, settleMs: 1500,
+          memoryStats: async () => null, memoryPressure: async () => null,
+          log: createLog({ dir: path.join(os.homedir(), '.cache', 'reckon') }) });
+        const now = Date.now();
+        const L = await list();
+        res.seen = L.length;
+        const ident = (pid) => { const p = L.find((x) => x.pid === pid); return { pid, comm: p.command, startedAt: now - p.ageS * 1000 }; };
+        const row = (id, pids) => ({ id, title: id, confidence: 'high', lose: 'a test sleep', action: { id: 'term-processes', label: 'stop' }, target: { kind: 'test', pids: pids.map(ident) } });
+        e.remember('pressure', [row('sandbox-two', [a.pid, b.pid]), row('sandbox-stubborn', [c.pid])]);
+
+        const p = await e.preview({ action: 'term-processes', id: 'sandbox-two' });
+        const r = await e.run({ action: 'term-processes', id: 'sandbox-two', nonce: p.nonce });
+        res.two = { ok: r.ok, gone: r.gone, alive: r.stillAlive, ran: r.ran };
+
+        const p2 = await e.preview({ action: 'term-processes', id: 'sandbox-stubborn' });
+        const r2 = await e.run({ action: 'term-processes', id: 'sandbox-stubborn', nonce: p2.nonce });
+        res.stubborn = { alive: r2.stillAlive, offer: r2.killOffer };
+        const p3 = await e.preview({ action: 'kill-processes', id: 'sandbox-stubborn' });
+        const r3 = p3.ok ? await e.run({ action: 'kill-processes', id: 'sandbox-stubborn', nonce: p3.nonce }) : p3;
+        res.killed = { ok: r3.ok, gone: r3.gone, ran: r3.ran, refused: r3.refused };
+        res.log = e && fs.readFileSync(path.join(os.homedir(), '.cache', 'reckon', 'actions.log'), 'utf8').split('\\n').filter(Boolean).length;
+      } catch (err) { res.error = String(err && err.stack || err).split('\\n').slice(0, 2).join(' | '); }
+      finally { for (const k of kids) { try { k.kill('SIGKILL'); } catch {} } }
+      console.log(JSON.stringify(res));
+    })();
+  `;
+  const r = spawnSync(process.execPath, ['-e', script], { encoding: 'utf8', timeout: 60000,
+    env: { ...process.env, HOME: home, USERPROFILE: home } });
+  let res;
+  try { res = JSON.parse(String(r.stdout).trim().split('\n').pop()); }
+  catch { fs.rmSync(home, { recursive: true, force: true }); return fail('the sandboxed kill test printed nothing readable', String(r.stderr || r.stdout).slice(0, 160)); }
+  fs.rmSync(home, { recursive: true, force: true });
+  if (res.floor || res.error) return fail('the sandboxed kill test did not run', res.floor || res.error);
+  if (res.seen === 4) ok('the sandbox sees exactly its own three sleep processes and itself, and nothing else on the machine');
+  else fail('the sandbox saw the wrong processes', String(res.seen));
+  if (res.two && res.two.ok && res.two.gone === 2 && !res.two.alive.length && res.two.ran[0] === 'kill' && res.two.ran[1] === '-TERM') ok('preview, confirm, run: SIGTERM stopped the two test sleeps, measured gone after');
+  else fail('the polite stop did not work on the test sleeps', JSON.stringify(res.two));
+  if (res.stubborn && res.stubborn.alive.length === 1 && res.stubborn.offer && res.stubborn.offer.action === 'kill-processes') ok('a sleep that ignores SIGTERM is still alive, and SIGKILL is OFFERED, not sent');
+  else fail('the stubborn sleep was not handled as expected', JSON.stringify(res.stubborn));
+  if (res.killed && res.killed.ok && res.killed.gone === 1 && res.killed.ran[1] === '-KILL') ok('the separate click sends SIGKILL, and the stubborn sleep is gone');
+  else fail('the forced stop did not work', JSON.stringify(res.killed));
+  if (res.log >= 3) ok(`actions.log was written inside the sandbox's own ~/.cache/reckon (${res.log} lines)`);
+  else fail('actions.log was not written in the sandbox', String(res.log));
+  if (stamp(realLog) === before) ok('the real ~/.cache/reckon/actions.log was not touched');
+  else fail('the test wrote to the real ~/.cache/reckon/actions.log');
+}
+
 async function step(name, fn) {
   console.log('\n' + name);
   try { await fn(); }
@@ -1582,6 +1950,7 @@ async function step(name, fn) {
   await step('native pet', async () => { await nativePet(); });
   await step('watch', async () => { await watchDecides(); });
   await step('corner', async () => { await cornerIsSafe(); });
+  await step('actions', async () => { await actions(); });
   await step('agent skills', async () => { await agentSkills(); });
   if (!process.env.RECKON_CHECK_CHILD) await step('other platforms', asUnsupportedPlatform);
   console.log(failures ? `\n${failures} FAILURE(S)\n` : '\nall checks passed\n');

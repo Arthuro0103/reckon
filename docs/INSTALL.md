@@ -92,6 +92,12 @@ again until you ask for another scan.
 Configuration is optional. reckon guesses where you keep code and notes; to override the
 guess, copy `reckon.config.example.json` to `reckon.config.json` in the project folder.
 
+The **Do** buttons on the Memory and Pressure tabs are the only things that change the machine,
+and only after a preview, your Confirm and a five-second countdown. The first time one asks an
+app to quit, macOS may ask whether the app that runs reckon (your terminal) may control that app;
+that is macOS's own question, and saying no only means that button cannot work. Nothing needs
+`sudo`, and nothing is installed for it.
+
 ## The native pet, if you want it (macOS)
 
 `reckon watch --pet` shows the lantern as a small window that stays above every window, full-screen

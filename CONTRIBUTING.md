@@ -6,15 +6,35 @@ declined regardless of how good the rest of it is — say so in the review rathe
 merging it and fixing it later, because "later" is how the constraint quietly stops being
 true.
 
-## 1. Nothing deletes, moves, or overwrites anything outside `~/.cache/reckon/`
+## 1. Nothing changes the machine except a clicked action from the table in `lib/act.js`
 
 This is the rule the whole project is built to prove, not a default that can be relaxed
 for one feature. reckon reads your machine, works out what it thinks, hands you the exact
 command, and stops. You run it.
 
-**A pull request that adds an execute button will be declined, however convenient it
-looks** — "just this once, behind a confirmation dialog" is still an execute button. If a
-feature needs to write something to make itself useful (a generated snippet, a cache, a
+**The one exception, decided by the owner on 2026-10-07:** *reckon never does anything you
+did not click, and never anything outside the table of actions.* `lib/act.js` holds that
+table (today: quit an app gracefully, stop orphaned processes with SIGTERM and, as a separate
+later click, SIGKILL, shut iOS simulators down, quit an idle Docker Desktop). Everything else
+still ends as text. What an action must have, or the pull request is declined:
+
+- **A row in the table, and nowhere else.** No other file may run a command that changes
+  state (`kill`, `osascript … quit`, `xcrun simctl shutdown`, `rm`, `trash`). `bin/check.js`
+  fails if one does.
+- **No sudo.** Not in the table, not behind a flag. Anything that needs it stays text: DNS,
+  `/etc/hosts`, Time Machine snapshots. `purge` never gets a button: it is a placebo.
+- **`label`, `lose`, `reversible`, `verify` and a preview.** The person sees what happens,
+  how much, the proof measured *now*, what they lose and whether it can be undone, before
+  Confirm and a five-second countdown they can cancel.
+- **The browser names, the server decides.** The page sends `{ action, id }`. The server
+  finds the id in its own last reading, measures the target again (same pid, same executable,
+  same start time; same app; still idle) and builds the argv from the table. A path or a
+  command in the request body is ignored. A target that changed is refused.
+- **Only `high` and `medium` rows.** A `low` row stays copy-only.
+- **Before and after.** The machine is measured again after the command, and one line goes
+  to `~/.cache/reckon/actions.log`.
+
+If a feature needs to write something to make itself useful (a generated snippet, a cache, a
 config template), it writes inside `~/.cache/reckon/` and nowhere else. If it needs to
 write outside that folder — including `/etc/hosts`, DNS settings, or anything under a
 user's home directory — it produces the shell command as text and stops there, the same
