@@ -1,6 +1,6 @@
 {
   "name": "@arthurparis/reckon",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "A local dashboard that tells you what to do about your computer's disk and memory — and deletes only with one click.",
   "license": "MIT",
   "private": false,
