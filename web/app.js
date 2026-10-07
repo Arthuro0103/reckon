@@ -1718,6 +1718,7 @@ async function actRun(slot, p) {
 function actResult(slot, p, r) {
   if (!r.ok && r.refused) { slot.append(el('p', { class: 'act-refused' }, 'Nothing was done. ', r.refused)); return; }
   if (r.kind === 'disk') return diskResult(slot, p, r);   // phase 3
+  if (r.unit === 'model') return modelResult(slot, r);     // AI tools: a model, not processes
   const fmt = (s) => (s ? `pressure ${s.pressure ?? 'not read'} · ${s.availableMB ?? '?'} MB free or reclaimable · ${s.compressedMB ?? '?'} MB compressed` : 'not measured');
   const card = el('div', { class: 'act-card act-result' },
     el('h4', {}, r.dryRun ? 'Dry run: nothing was run' : r.ok ? 'Done' : 'It did not take'),
@@ -1742,6 +1743,25 @@ function actResult(slot, p, r) {
   }
   card.append(el('div', { class: 'act-actions' }, el('button', { class: 'copy',
     onclick: () => goTo(state.tab, true) }, 'measure again')));
+}
+
+/* ============================================================ AI TOOLS
+   An idle AI session and orphaned tool servers end as processes, and actResult
+   draws them. A local model is not a process: Ollama keeps running and drops the
+   model, so the result is "still loaded or not", measured from Ollama's own list. */
+function modelResult(slot, r) {
+  const fmt = (s) => (s ? `pressure ${s.pressure ?? 'not read'} · ${s.availableMB ?? '?'} MB free or reclaimable` : 'not measured');
+  slot.append(el('div', { class: 'act-card act-result' },
+    el('h4', {}, r.dryRun ? 'Dry run: nothing was run' : r.ok ? 'Unloaded' : 'It did not take'),
+    el('pre', { class: 'act-argv' }, (r.ran || r.argv || []).join(' ')),
+    r.message ? el('p', {}, r.message) : null,
+    r.dryRun ? null : el('p', {}, r.gone
+      ? `Ollama no longer lists the model as loaded.${r.freedKB ? ` It reported about ${Math.round(r.freedKB / 1048576 * 10) / 10} GB for it.` : ''}`
+      : 'Ollama still lists the model as loaded.'),
+    el('p', {}, el('b', {}, 'Before. '), fmt(r.before)),
+    r.after ? el('p', {}, el('b', {}, 'After. '), fmt(r.after)) : null,
+    r.logged === false ? el('p', { class: 'act-refused' }, 'The result could not be written to ~/.cache/reckon/actions.log.') : null,
+    el('div', { class: 'act-actions' }, el('button', { class: 'copy', onclick: () => goTo(state.tab, true) }, 'measure again'))));
 }
 
 /* ======================================================= DISK ACTIONS (phase 3)
