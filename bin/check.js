@@ -1864,6 +1864,8 @@ async function actions() {
     'remove-worktree': [{}, { main: `${H}/www/r`, wt: `${H}/www/wt/a` }],
     'move-to-trash': [{}, { bin: '/usr/bin/trash', path: `${H}/Library/Application Support/MobileSync/Backup` }],
     'docker-volume-rm': [{ names: ['v1'] }, { names: ['v1'] }],
+    // AI tools: a model name instead of pids.
+    'stop-ollama-model': [{ name: 'llama3.2:latest' }, { name: 'llama3.2:latest' }],
   };
   const names = Object.keys(act.ACTIONS);
   for (const name of names) {
@@ -2065,6 +2067,10 @@ async function actions() {
   // --- phase 3: disk -----------------------------------------------------
   await diskActions(act);
   await diskSandbox();
+
+  // --- AI tools: idle sessions, orphaned tool servers, local models ----------
+  await aiActions(act);
+  await aiSandbox();
 }
 
 // ---------------------------------------------------------------------------
@@ -2768,6 +2774,452 @@ async function memoryMeasures() {
   else fail('there is a /api/headroom route that is not GET only');
   if (!/headroom\.(?!collect)\w+\(/.test(srv.replace(/require\('\.\/lib\/headroom'\)/, ''))) ok('server.js uses headroom only to read');
   else fail('server.js calls something on headroom besides collect()');
+}
+
+// ---------------------------------------------------------------------------
+// AI tools: idle AI sessions, orphaned MCP / tool servers, Ollama models.
+// Everything here runs against a FAKE machine (process list, terminals,
+// working folders, transcript times, ports) and a dry run, and the one HTTP
+// server it talks to is a fake Ollama this test starts on a random loopback
+// port. No real process is looked up, no real ~/.claude is read, no real
+// Ollama is contacted. The bad cases are planted first: a guard that has never
+// refused anything proves nothing.
+// ---------------------------------------------------------------------------
+async function aiActions(act) {
+  const http = require('node:http');
+  const ai = require(path.join(ROOT, 'lib/aitools.js'));
+  const H = 3600, NOW = 2_000_000_000_000, HOME = '/Users/sample';
+  const P = (pid, ppid, command, ageS, tty = null, extra = {}) => ({ pid, ppid, command, ageS, startedAt: NOW - ageS * 1000, tty, rssKB: 300 * 1024, cpuPct: 0.1, ...extra });
+  const CLAUDE = '/Users/sample/.local/bin/claude';
+  let procs;
+  const resetProcs = () => {
+    procs = [
+      P(400, 1, '/System/Applications/Utilities/Terminal.app/Contents/MacOS/Terminal', 20 * H, null, { systemManaged: true }),
+      P(450, 400, '/bin/zsh', 20 * H, 'ttys001'),
+      P(500, 450, CLAUDE, 10 * H, 'ttys001'),           // the agent that started reckon: an ancestor
+      P(600, 500, '/bin/zsh', H, 'ttys001'),
+      P(777, 600, '/usr/local/bin/node', 100, null),    // reckon itself (no terminal of its own here)
+      P(4001, 400, '/bin/zsh', 9 * H, 'ttys002'), P(1001, 4001, CLAUDE, 8 * H, 'ttys002'),            // idle, transcript old: offered
+      P(4002, 400, '/bin/zsh', 9 * H, 'ttys003'), P(1002, 4002, CLAUDE, 8 * H, 'ttys003'), P(1003, 1002, '/usr/local/bin/node', 8 * H, 'ttys003'),   // has a child
+      // Each under a shell of its own, as in a real terminal tab (the shell is the parent, not Terminal.app).
+      P(1004, 4004, CLAUDE, 8 * H, 'ttys004'), P(4004, 400, '/bin/zsh', 9 * H, 'ttys004'),     // terminal used 30 min ago
+      P(1005, 4005, CLAUDE, 8 * H, 'ttys005'), P(4005, 400, '/bin/zsh', 9 * H, 'ttys005'),     // transcript written 30 min ago
+      P(1006, 4006, CLAUDE, 8 * H, 'ttys006'), P(4006, 400, '/bin/zsh', 9 * H, 'ttys006'),     // terminal unreadable
+      P(1007, 4007, CLAUDE, 8 * H, 'ttys007'), P(4007, 400, '/bin/zsh', 9 * H, 'ttys007'),     // working folder unreadable
+      P(1008, 4008, CLAUDE, 8 * H, 'ttys008'), P(4008, 400, '/bin/zsh', 9 * H, 'ttys008'),     // no transcript at all
+      P(1009, 4009, '/opt/homebrew/bin/codex', 8 * H, 'ttys010'), P(4009, 400, '/bin/zsh', 9 * H, 'ttys010'),   // a tool whose transcripts reckon does not know
+      P(1011, 4011, CLAUDE, 2 * H, 'ttys011'), P(4011, 400, '/bin/zsh', 9 * H, 'ttys011'),     // younger than 6 h
+      P(1013, 1, '/Applications/Notch.app/Contents/MacOS/Notch', 9 * H, null, { systemManaged: true }), P(1012, 1013, CLAUDE, 8 * H, 'ttys012'),   // an app's engine
+    ];
+  };
+  resetProcs();
+  const TTY = { ttys001: NOW - 3 * H * 1000, ttys002: NOW - 3 * H * 1000, ttys003: NOW - 3 * H * 1000, ttys004: NOW - 1800 * 1000,
+    ttys005: NOW - 3 * H * 1000, ttys007: NOW - 3 * H * 1000, ttys008: NOW - 3 * H * 1000, ttys010: NOW - 3 * H * 1000, ttys011: NOW - 3 * H * 1000, ttys012: NOW - 3 * H * 1000 };
+  const CWD = { 500: `${HOME}/www/r`, 1001: `${HOME}/www/p1`, 1002: `${HOME}/www/p2`, 1004: `${HOME}/www/p4`, 1005: `${HOME}/www/p5`, 1006: `${HOME}/www/p6`, 1008: `${HOME}/www/p8`, 1012: `${HOME}/www/n` };
+  const TR = new Map();
+  const transcript = (cwd, at, count = 3) => TR.set(ai.projectDir(HOME, cwd), { at, count });
+  for (const pid of [500, 1001, 1002, 1004, 1006, 1012]) transcript(CWD[pid], NOW - 3 * H * 1000);
+  transcript(CWD[1005], NOW - 1800 * 1000);
+  let PORTS = [];
+  let ARGS = {};
+  const reads = { ttys: [], cwds: [], dirs: [] };
+  const probe = {
+    now: () => NOW, home: () => HOME,
+    ttyTouchedAt: async (t) => { reads.ttys.push(t); return TTY[t] ?? null; },
+    cwdOf: async (pid) => { reads.cwds.push(pid); return CWD[pid] ?? null; },
+    newestTranscript: async (dir) => { reads.dirs.push(dir); return TR.get(dir) || null; },
+    argsOf: async (pids) => Object.fromEntries(pids.filter((p) => ARGS[p]).map((p) => [p, ARGS[p]])),
+    ports: async () => PORTS,
+    ollamaLoaded: async () => null,
+    which: () => null,
+  };
+  const ran = [], logged = [];
+  const make = (o = {}) => act.createEngine({
+    processList: async () => procs.map((p) => ({ ...p })),
+    appBundle: async () => null, runningContainers: async () => 0, memoryStats: async () => null, memoryPressure: async () => null,
+    exec: async (cmd, args) => { ran.push([cmd, ...args]); return { ok: true, out: '', erro: null }; },
+    log: { append: (e) => { logged.push(e); return true; } },
+    now: () => NOW, home: () => HOME, selfPid: 777, dryRun: true, minDelayMs: 0, killAfterMs: 0, settleMs: 0,
+    which: () => null, ai: probe, ...o,
+  });
+  const ident = (p) => ({ pid: p.pid, comm: p.command, startedAt: p.startedAt });
+  const byPid = (pid) => procs.find((p) => p.pid === pid);
+
+  // --- 1. idle AI sessions ------------------------------------------------
+  const rows = await ai.idleSessions(procs, probe, 777);
+  const ids = rows.map((r) => r.id).sort().join(',');
+  const want = ['ai-session-1001', 'ai-session-1002', 'ai-session-1006', 'ai-session-1007', 'ai-session-1008', 'ai-session-1009'].join(',');
+  if (ids === want) ok('idle sessions: one row each for the idle-looking ones; reckon\'s own agent, a busy terminal, a fresh transcript, a young session and an app\'s engine get no row');
+  else fail('the idle-session rows are wrong', ids);
+  const offered = rows.filter((r) => r.action).map((r) => r.id);
+  if (offered.join() === 'ai-session-1001' && rows.filter((r) => !r.action).every((r) => r.confidence === 'low')) ok('only the session with every proof (6 h old, no child, terminal and transcript quiet for 2 h) gets a button; the rest are low and copy-only');
+  else fail('a session got a button without every proof', offered.join());
+  const r1001 = rows.find((r) => r.id === 'ai-session-1001');
+  if (r1001 && r1001.confidence === 'medium' && /stays on disk/.test(r1001.lose) && r1001.lose.includes(`cd '${HOME}/www/p1' && claude --resume`) && /modification time only/.test(r1001.proof) && /3h0m ago/.test(r1001.proof)) ok('the offered row is medium, its proof has the measured idle times, and its lose says the conversation stays on disk with the exact resume command');
+  else fail('the offered session row is missing its proof or its resume command', JSON.stringify(r1001));
+  const whyOf = (id) => (rows.find((r) => r.id === id) || {}).proof || '';
+  if (/child process/.test(whyOf('ai-session-1002')) && /Cannot judge/.test(whyOf('ai-session-1006')) && /Cannot judge/.test(whyOf('ai-session-1007'))
+    && /No transcript/.test(whyOf('ai-session-1008')) && /does not know where codex/.test(whyOf('ai-session-1009'))) ok('each copy-only session says why: a live child, an unreadable terminal or folder ("cannot judge"), no transcript, or a tool reckon cannot read');
+  else fail('a copy-only session does not say why', [1002, 1006, 1007, 1008, 1009].map((p) => whyOf(`ai-session-${p}`).slice(-80)).join(' | '));
+  if (!reads.cwds.includes(500) && !reads.ttys.includes('ttys012')) ok('reckon\'s own ancestor and an app\'s engine are refused before anything about them is even read');
+  else fail('an ancestor or an app engine was measured as a candidate');
+
+  let e = make();
+  e.remember('pressure', rows);
+  const p1 = await e.preview({ action: 'end-ai-session', id: 'ai-session-1001' });
+  const run1 = p1.ok && await e.run({ action: 'end-ai-session', id: 'ai-session-1001', nonce: p1.nonce });
+  if (p1.ok && /stays on disk/.test(p1.lose) && /claude --resume/.test(p1.undo) && p1.reversible === false && run1 && run1.dryRun
+    && JSON.stringify(run1.argv) === JSON.stringify(['kill', '-TERM', '1001'])) ok('preview then dry run: the argv is exactly ["kill", "-TERM", "1001"], nothing else, and the preview shows the resume command');
+  else fail('the idle-session action is wrong', JSON.stringify(run1 || p1));
+  const line = logged.find((l) => l.action === 'end-ai-session' && l.dryRun);
+  if (line && line.info && line.info.resume && line.info.tty === 'ttys002') ok('actions.log gets the session\'s terminal, folder and resume command');
+  else fail('the idle-session log line has no target info', JSON.stringify(line));
+
+  // Forged rows: even a row this collector never built is judged again at the click.
+  const forge = (pid, over = {}) => ({ id: `ai-session-${pid}`, title: 'forged', confidence: 'medium', lose: 'x',
+    action: { id: 'end-ai-session', label: 'End' },
+    target: { kind: 'ai-session', tool: 'claude', tty: byPid(pid).tty, cwd: CWD[pid] || null, dirShown: 'x', resume: 'x', pid: ident(byPid(pid)), ...over } });
+  const tryForged = async (pid, over) => { const x = make(); x.remember('pressure', [forge(pid, over)]); return x.preview({ action: 'end-ai-session', id: `ai-session-${pid}` }); };
+  const fAnc = await tryForged(500), fSelf = await tryForged(777), fKid = await tryForged(1002), fTty = await tryForged(1004),
+    fTr = await tryForged(1005), fNoTty = await tryForged(1006), fYoung = await tryForged(1011), fApp = await tryForged(1012);
+  if (!fAnc.ok && /reckon itself or runs it/.test(fAnc.refused) && !fSelf.ok && /reckon itself/.test(fSelf.refused)) ok('the agent that started reckon (an ancestor) and reckon itself are refused at the click, even on a forged row');
+  else fail('reckon or its ancestor could be signalled', JSON.stringify([fAnc, fSelf]));
+  if (!fKid.ok && /child process/.test(fKid.refused)) ok('a session with a live child is refused at the click');
+  else fail('a session with a child was accepted', JSON.stringify(fKid));
+  if (!fTty.ok && /terminal was used/.test(fTty.refused) && !fTr.ok && /transcript in its folder was written/.test(fTr.refused)) ok('a terminal used 30 min ago, or a transcript written 30 min ago, is refused');
+  else fail('a recently active session was accepted', JSON.stringify([fTty, fTr]));
+  if (!fNoTty.ok && /Cannot judge/.test(fNoTty.refused)) ok('a session whose idleness cannot be measured is refused: "cannot judge"');
+  else fail('an unmeasurable session was accepted', JSON.stringify(fNoTty));
+  if (!fYoung.ok && !fApp.ok) ok('a session younger than 6 h, and the engine of a running app, are refused');
+  else fail('a young session or an app engine was accepted');
+
+  // Same terminal as reckon: never, even when everything else holds.
+  procs.find((p) => p.pid === 777).tty = 'ttys002';
+  const sameTty = await ai.idleSessions(procs, probe, 777);
+  const fSame = await tryForged(1001);
+  if (!sameTty.some((r) => r.id === 'ai-session-1001') && !fSame.ok && /same terminal as reckon/.test(fSame.refused)) ok('a session on reckon\'s own terminal gets no row and is refused');
+  else fail('a session on reckon\'s terminal was offered', JSON.stringify(fSame));
+  resetProcs();
+
+  // Between the preview and the click.
+  const between = async (change) => {
+    resetProcs();
+    const x = make(); x.remember('pressure', rows);
+    const pv = await x.preview({ action: 'end-ai-session', id: 'ai-session-1001' });
+    const undo = change();
+    const rv = await x.run({ action: 'end-ai-session', id: 'ai-session-1001', nonce: pv.nonce });
+    if (undo) undo();
+    resetProcs();
+    return { pv, rv };
+  };
+  const typed = await between(() => { const was = TTY.ttys002; TTY.ttys002 = NOW - 60 * 1000; return () => { TTY.ttys002 = was; }; });
+  const wrote = await between(() => { const k = ai.projectDir(HOME, CWD[1001]); const was = TR.get(k); TR.set(k, { at: NOW - 60 * 1000, count: 4 }); return () => TR.set(k, was); });
+  const reused = await between(() => { byPid(1001).startedAt += 60000; });
+  const other = await between(() => { byPid(1001).command = '/bin/zsh'; });
+  const spawned = await between(() => { procs.push(P(1099, 1001, '/usr/local/bin/node', 10, 'ttys002')); });
+  const moved = await between(() => { const was = CWD[1001]; CWD[1001] = `${HOME}/www/elsewhere`; transcript(CWD[1001], NOW - 3 * H * 1000); return () => { CWD[1001] = was; }; });
+  if (typed.pv.ok && !typed.rv.ok && /terminal was used/.test(typed.rv.refused) && !wrote.rv.ok && /transcript/.test(wrote.rv.refused)) ok('a keystroke or a transcript write between the preview and the click refuses the run');
+  else fail('activity after the preview did not refuse the run', JSON.stringify([typed.rv, wrote.rv]));
+  if (!reused.rv.ok && /different process/.test(reused.rv.refused) && !other.rv.ok) ok('PID reuse is refused: same number, another start time or another executable');
+  else fail('a recycled session pid was accepted', JSON.stringify([reused.rv, other.rv]));
+  if (!spawned.rv.ok && /child process/.test(spawned.rv.refused) && !moved.rv.ok && /working folder/.test(moved.rv.refused)) ok('a child that appeared, or a working folder that changed, after the preview refuses the run');
+  else fail('a session that started work after the preview was acted on', JSON.stringify([spawned.rv, moved.rv]));
+  if (logged.filter((l) => l.action === 'end-ai-session' && l.refused).length >= 5) ok('every refused run went to actions.log');
+  else fail('a refused idle-session run was not logged');
+  if (!act.ACTIONS['end-ai-session'].follows && !Object.values(act.ACTIONS).some((a) => a.follows === 'end-ai-session' || a.follows === 'stop-orphan-tools')
+    && act.ACTIONS['kill-processes'].follows === 'term-processes') ok('an AI session or a tool server is only ever sent SIGTERM: no forced stop follows either action');
+  else fail('a forced stop can follow an AI action');
+
+  // --- 2. orphaned MCP / tool servers ---------------------------------------
+  const base = procs.filter((p) => [400, 450, 500, 600, 777].includes(p.pid));
+  const tools = () => [
+    ...base,
+    P(2001, 1, '/usr/local/bin/node', 2 * H, null, { rssKB: 80 * 1024 }), P(2002, 2001, '/usr/local/bin/node', 2 * H, null, { rssKB: 40 * 1024 }),
+    P(2003, 1, '/usr/local/bin/node', 3 * H), P(2004, 1, '/usr/local/bin/node', 3 * H), P(2005, 1, '/usr/local/bin/node', 1800),
+    P(4000, 1, '/bin/zsh', 9 * H, 'ttys030'), P(2006, 4000, '/usr/local/bin/node', 3 * H, 'ttys030'),
+    P(2007, 1, '/usr/local/bin/node', 2 * H), P(2008, 1, '/usr/local/bin/node', 2 * H, null, { systemManaged: true }),
+    P(2009, 1, '/usr/local/bin/node', 2 * H, 'ttys020'), P(2010, 450, '/bin/zsh', 2 * H, 'ttys020'),
+  ];
+  ARGS = {
+    2001: `node ${HOME}/.npm/_npx/9f/node_modules/.bin/mcp-server-filesystem ${HOME}/secret-folder`, 2003: 'npm exec @modelcontextprotocol/server-github',
+    2004: 'node server.js', 2005: 'node mcp-young.js', 2006: 'node mcp-attached.js', 2007: 'uvx mcp-server-fetch', 2008: 'node mcp-agent.js',
+    2009: 'node /x/typescript-language-server --stdio', 4000: '-zsh',
+  };
+  PORTS = [{ pid: 2007, port: 8123 }];
+  procs = tools();
+  const trows = await ai.orphanTools(procs, probe, PORTS, { selfPid: 777 });
+  const tids = trows.map((r) => `${r.id}:${r.confidence}`).sort().join(',');
+  if (tids === 'orphan-tool-mcp-server-fetch:low,orphan-tool-mcp-server-filesystem:medium,orphan-tool-mcp-server-github:medium') ok('orphaned tool servers: grouped by tool; a young one, one with a living parent, a launchd one, one whose terminal is still open and a plain node server get no row; one listening on a port is copy-only');
+  else fail('the orphaned-tool rows are wrong', tids);
+  const fs1 = trows.find((r) => r.id === 'orphan-tool-mcp-server-filesystem');
+  if (fs1 && fs1.mb === 120 && /ppid 1/.test(fs1.proof) && !JSON.stringify(trows).includes('secret-folder')) ok('the group carries its total RSS (120 MB) and its proof, and the command line itself never reaches the row');
+  else fail('the orphaned-tool row leaks its command line or misses its total', JSON.stringify(fs1));
+  e = make(); e.remember('pressure', trows);
+  const pt = await e.preview({ action: 'stop-orphan-tools', id: 'orphan-tool-mcp-server-filesystem' });
+  const rt = pt.ok && await e.run({ action: 'stop-orphan-tools', id: 'orphan-tool-mcp-server-filesystem', nonce: pt.nonce });
+  if (rt && rt.dryRun && JSON.stringify(rt.argv) === JSON.stringify(['kill', '-TERM', '2001', '2002'])) ok('the group is stopped with exactly ["kill", "-TERM", "2001", "2002"]: the orphan and its child');
+  else fail('the orphaned-tool argv is wrong', JSON.stringify(rt || pt));
+  const lowT = await e.preview({ action: 'stop-orphan-tools', id: 'orphan-tool-mcp-server-fetch' });
+  if (!lowT.ok) ok('a tool server listening on a port has no button');
+  else fail('a listening tool server was offered');
+  const tBetween = async (change) => {
+    procs = tools(); PORTS = [{ pid: 2007, port: 8123 }];
+    const x = make(); x.remember('pressure', trows);
+    const pv = await x.preview({ action: 'stop-orphan-tools', id: 'orphan-tool-mcp-server-filesystem' });
+    change();
+    return x.run({ action: 'stop-orphan-tools', id: 'orphan-tool-mcp-server-filesystem', nonce: pv.nonce });
+  };
+  const adopted = await tBetween(() => { procs.find((p) => p.pid === 2001).ppid = 4000; });
+  const listens = await tBetween(() => { PORTS = [{ pid: 2002, port: 9999 }]; });
+  const blind = await tBetween(() => { PORTS = null; });
+  const recycled = await tBetween(() => { procs.find((p) => p.pid === 2002).startedAt -= 120000; });
+  if (!adopted.ok && /parent again/.test(adopted.refused) && !listens.ok && /listens on port 9999/.test(listens.refused) && !blind.ok && /could not be read/.test(blind.refused)) ok('at the click: a root with a parent again, a new listening port, or ports that cannot be read, each refuses');
+  else fail('an orphaned tool group that changed was acted on', JSON.stringify([adopted, listens, blind]));
+  if (!recycled.ok && /different process/.test(recycled.refused)) ok('a recycled pid in a tool group is refused');
+  else fail('a recycled tool pid was accepted', JSON.stringify(recycled));
+  procs = tools();
+  procs.find((p) => p.pid === 777).ppid = 2002;   // reckon now runs inside the filesystem server's tree
+  const withSelf = await ai.orphanTools(procs, probe, [], { selfPid: 777 });
+  if (!withSelf.some((r) => r.id === 'orphan-tool-mcp-server-filesystem')) ok('a tool tree that reckon runs inside is never offered');
+  else fail('reckon offered to stop the tree it runs in');
+  if (ai.toolLabel('node /a/b/node_modules/.bin/mcp-server-x /Users/me/private', 'node') === 'mcp-server-x' && ai.toolLabel('npx -y @modelcontextprotocol/server-memory@1.2.3', 'node') === 'mcp-server-memory') ok('a tool is named by the path segment that names it, never by a whole path');
+  else fail('the tool label is wrong', ai.toolLabel('npx -y @modelcontextprotocol/server-memory@1.2.3', 'node'));
+  resetProcs();
+
+  // --- 3. local models: a fake Ollama on a random loopback port --------------
+  let body = { models: [
+    { name: 'llama3.2:latest', size: 2147483648, size_vram: 0, digest: 'd1', expires_at: '2026-10-07T20:00:00Z' },
+    { name: '--help', size: 1 }, { name: 'x; rm -rf ~', size: 1 },
+    { name: 'hf.co/user/repo:Q4_K_M', size: 1073741824, digest: 'd2' },
+  ] };
+  let hits = 0;
+  const serve = (handler) => new Promise((res) => { const s = http.createServer(handler); s.listen(0, '127.0.0.1', () => res(s)); });
+  const fake = await serve((req, res) => {
+    hits++;
+    if (req.url !== '/api/ps' || req.method !== 'GET') { res.statusCode = 404; return res.end(); }
+    res.setHeader('content-type', 'application/json'); res.end(JSON.stringify(body));
+  });
+  const port = fake.address().port;
+  const redirect = await serve((req, res) => { res.statusCode = 302; res.setHeader('location', `http://127.0.0.1:${port}/api/ps`); res.end(); });
+  const garbage = await serve((req, res) => { res.end('<html>not json'); });
+  const hang = await serve(() => { /* never answers */ });
+  try {
+    const listed = await ai.ollamaLoaded({ _testPort: port });
+    if (Array.isArray(listed) && listed.length === 4 && listed[0].name === 'llama3.2:latest' && listed[0].size === 2147483648) ok('the Ollama reader reads /api/ps from the fake server: names and sizes from the API');
+    else fail('the Ollama reader did not read the fake server', JSON.stringify(listed));
+    const before = hits;
+    const redir = await ai.ollamaLoaded({ _testPort: redirect.address().port });
+    const junk = await ai.ollamaLoaded({ _testPort: garbage.address().port });
+    const t0 = Date.now();
+    const slow = await ai.ollamaLoaded({ _testPort: hang.address().port });
+    const took = Date.now() - t0;
+    if (redir === null && hits === before && junk === null) ok('a redirect is not followed (the target was never asked) and a body that is not JSON is "could not find out"');
+    else fail('the Ollama reader followed a redirect or trusted garbage', JSON.stringify([redir, junk, hits - before]));
+    if (slow === null && took < 3500) ok(`a server that never answers is given up on after ${took} ms (the limit is 2 s)`);
+    else fail('the Ollama reader waited too long or invented an answer', `${took} ms`);
+
+    const probeO = { ...probe, ollamaLoaded: () => ai.ollamaLoaded({ _testPort: port }), which: (n) => (n === 'ollama' ? '/fake/bin/ollama' : null) };
+    const withOllama = [...procs, P(3001, 1, '/Applications/Ollama.app/Contents/Resources/ollama', 5 * H, null, { rssKB: 2_200_000 }),
+      P(3002, 1, '/Applications/LM Studio.app/Contents/MacOS/LM Studio', 5 * H, null, { rssKB: 500_000 })];
+    const mrows = await ai.localModels(withOllama, probeO);
+    const acted = mrows.filter((r) => r.action).map((r) => r.target.name).sort();
+    if (acted.join('|') === 'hf.co/user/repo:Q4_K_M|llama3.2:latest' && mrows.filter((r) => /ollama-odd/.test(r.id)).length === 2 && mrows.some((r) => r.id === 'lmstudio-running' && !r.action && r.confidence === 'low')) ok('a row per loaded model, sized by the API; a model name with an option or a ; in it gets no button; LM Studio is detected but copy-only');
+    else fail('the Ollama rows are wrong', JSON.stringify(mrows.map((r) => [r.id, r.confidence, !!r.action])));
+    const llamaRow = mrows.find((r) => r.target && r.target.name === 'llama3.2:latest');
+    if (llamaRow && llamaRow.mb === 2048 && /api\/ps/.test(llamaRow.proof) && /model file stays/.test(llamaRow.lose)) ok('the model row says how much (2048 MB from the API), where that came from, and that the file on disk stays');
+    else fail('the model row is incomplete', JSON.stringify(llamaRow));
+    const noBin = await ai.localModels(withOllama, { ...probeO, which: () => null });
+    const nb = noBin.find((r) => /llama3-2/.test(r.id));
+    if (nb && !nb.action && /not on this panel's PATH/.test(nb.proof)) ok('with no ollama binary the button is hidden and the row says why');
+    else fail('a model row offered a button with no ollama binary', JSON.stringify(nb));
+
+    const eo = make({ ai: probeO, which: probeO.which });
+    eo.remember('memory', mrows);
+    const po = await eo.preview({ action: 'stop-ollama-model', id: llamaRow.id });
+    const ro = po.ok && await eo.run({ action: 'stop-ollama-model', id: llamaRow.id, nonce: po.nonce });
+    if (po.ok && po.reversible === true && ro && ro.dryRun && JSON.stringify(ro.argv) === JSON.stringify(['ollama', 'stop', 'llama3.2:latest'])) ok('preview then dry run: exactly ["ollama", "stop", "llama3.2:latest"], the name as one argv entry, marked reversible');
+    else fail('the Ollama action is wrong', JSON.stringify(ro || po));
+    const hfRow = mrows.find((r) => r.target && r.target.name === 'hf.co/user/repo:Q4_K_M');
+    const ph = await eo.preview({ action: 'stop-ollama-model', id: hfRow.id });
+    const rh = ph.ok && await eo.run({ action: 'stop-ollama-model', id: hfRow.id, nonce: ph.nonce });
+    if (rh && JSON.stringify(rh.argv) === JSON.stringify(['ollama', 'stop', 'hf.co/user/repo:Q4_K_M'])) ok('a namespaced model name passes through unchanged, as one argument');
+    else fail('the namespaced model argv is wrong', JSON.stringify(rh || ph));
+
+    const forgeM = (name) => ({ id: 'ollama-forged', title: 'forged', confidence: 'medium', lose: 'x', action: { id: 'stop-ollama-model', label: 'x' }, target: { kind: 'ollama', name } });
+    const injected = [];
+    for (const name of ['--help', 'x; rm -rf ~', '$(touch /tmp/p)', '../../etc', 'a b', '-v', 'llama3.2:latest\nrm']) {
+      const x = make({ ai: probeO, which: probeO.which }); x.remember('memory', [forgeM(name)]);
+      const r = await x.preview({ action: 'stop-ollama-model', id: 'ollama-forged' });
+      if (r.ok) injected.push(name);
+    }
+    if (!injected.length) ok('7 injected model names (an option, a ;, a $(), a .., a space, a newline) are refused before anything runs');
+    else fail('an injected model name reached the preview', injected.join(' | '));
+    const notListed = make({ ai: probeO, which: probeO.which }); notListed.remember('memory', [forgeM('mistral:7b')]);
+    const nl = await notListed.preview({ action: 'stop-ollama-model', id: 'ollama-forged' });
+    if (!nl.ok && /not in Ollama's list/.test(nl.refused)) ok('a well-formed name that Ollama does not list at the click is refused');
+    else fail('a model Ollama did not list was offered', JSON.stringify(nl));
+    const eo2 = make({ ai: probeO, which: probeO.which }); eo2.remember('memory', mrows);
+    const po2 = await eo2.preview({ action: 'stop-ollama-model', id: llamaRow.id });
+    const keep = body; body = { models: [] };
+    const ro2 = await eo2.run({ action: 'stop-ollama-model', id: llamaRow.id, nonce: po2.nonce });
+    body = keep;
+    if (po2.ok && !ro2.ok && /not in Ollama's list/.test(ro2.refused)) ok('a model unloaded between the preview and the click is refused, not stopped twice');
+    else fail('the Ollama run did not re-read /api/ps at the click', JSON.stringify(ro2));
+    const nob = make({ ai: probeO, which: () => null }); nob.remember('memory', mrows);
+    const pnb = await nob.preview({ action: 'stop-ollama-model', id: llamaRow.id });
+    if (!pnb.ok && /not on this panel's PATH/.test(pnb.refused)) ok('the action is refused at the click when the ollama binary is missing');
+    else fail('the Ollama action ran with no binary', JSON.stringify(pnb));
+  } finally { for (const s of [fake, redirect, garbage, hang]) { s.closeAllConnections && s.closeAllConnections(); s.close(); } }
+  const down = make({ ai: { ...probe, ollamaLoaded: () => ai.ollamaLoaded({ _testPort: port }) }, which: () => '/fake/bin/ollama' });
+  down.remember('memory', [{ id: 'ollama-x', title: 'x', confidence: 'medium', lose: 'x', action: { id: 'stop-ollama-model', label: 'x' }, target: { kind: 'ollama', name: 'llama3.2:latest' } }]);
+  const pd = await down.preview({ action: 'stop-ollama-model', id: 'ollama-x' });
+  if (!pd.ok && /did not answer/.test(pd.refused)) ok('with Ollama not answering, the action is refused ("could not find out" is not "loaded")');
+  else fail('the Ollama action went ahead with no answer from the API', JSON.stringify(pd));
+
+  // The gate, and the address that is never configurable.
+  const gate = [['ollama', ['stop', '--help']], ['ollama', ['stop', 'a b']], ['ollama', ['run', 'llama3']], ['ollama', ['stop', 'a', 'b']],
+    ['ollama', ['stop', '../x']], ['ollama', ['rm', 'llama3']], ['ollama', ['stop']], ['kill', ['-TERM', '1']], ['sudo', ['ollama', 'stop', 'x']]];
+  const through = gate.filter(([c, a]) => { try { act.assertSafe(c, a); return true; } catch { return false; } });
+  if (!through.length) ok(`the gate refuses all ${gate.length} ollama and kill shapes the AI rows must never produce (an option, two names, run, rm, sudo)`);
+  else fail('the gate let an AI-tool argv through', through.map(([c, a]) => [c, ...a].join(' ')).join(' | '));
+  const src = read('lib/aitools.js');
+  const elsewhere = ['server.js', ...libFiles()].filter((f) => f !== 'lib/aitools.js' && /_testPort/.test(read(f)));
+  if (/const OLLAMA_HOST = '127\.0\.0\.1';/.test(src) && /const OLLAMA_PORT = 11434;/.test(src) && !/process\.env\.(?!PATH\b)/.test(src)
+    && !/_testPort\s*:/.test(src) && !elsewhere.length && /ollamaLoaded: \(\) => ollamaLoaded\(\)/.test(src)) ok('production reads Ollama at the hard-coded http://127.0.0.1:11434/api/ps: no environment variable, no config, and the test port is passed by bin/check.js alone');
+  else fail('the Ollama address can be changed outside the tests', elsewhere.join(', '));
+  if (!/readFileSync|createReadStream|openSync/.test(src)) ok('lib/aitools.js never opens a file: transcripts are known by their modification time only');
+  else fail('lib/aitools.js reads a file\'s contents');
+  if (!ran.length) ok('no AI-tool test above ran a command: the fake machine and the dry run held');
+  else fail('an AI-tool test ran a command', JSON.stringify(ran));
+}
+
+// For real, in a child process with HOME in a temporary folder: two links to
+// /bin/sleep named `claude`, spawned by the test with a working folder and a
+// transcript of their own. Only the one whose every proof holds is signalled,
+// for real; the other, whose terminal "was used a minute ago", must survive.
+// The process list is filtered to the test's own children: even a bug in the
+// engine could not reach anything else. Terminal times are supplied by the
+// test (a spawned child has no terminal); working folders are read for real
+// with lsof; transcript times are read for real with stat.
+async function aiSandbox() {
+  if (process.platform !== 'darwin') { ok('(sandboxed AI-session test runs on macOS only)'); return; }
+  if (process.env.RECKON_CHECK_CHILD) { ok('(sandboxed AI-session test runs once, in the parent suite)'); return; }
+  const os = require('node:os');
+  const { spawnSync } = require('node:child_process');
+  const realLog = path.join(os.homedir(), '.cache', 'reckon', 'actions.log');
+  const stamp = (f) => { try { const s = fs.statSync(f); return `${s.size}:${s.mtimeMs}`; } catch { return 'absent'; } };
+  const before = stamp(realLog);
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'reckon-ai-check-'));
+  const script = `
+    const os = require('node:os'), path = require('node:path'), fs = require('node:fs');
+    const { spawn } = require('node:child_process');
+    const ROOT = ${JSON.stringify(ROOT)};
+    const home = os.homedir();
+    if (home !== process.env.HOME || !/reckon-ai-check-/.test(home)) { console.log(JSON.stringify({ floor: 'HOME is not the sandbox' })); process.exit(0); }
+    const { run } = require(path.join(ROOT, 'lib/sh.js'));
+    const act = require(path.join(ROOT, 'lib/act.js'));
+    const ai = require(path.join(ROOT, 'lib/aitools.js'));
+    const { createLog } = require(path.join(ROOT, 'lib/actlog.js'));
+    const H = 3600, AGE = 7 * H;
+    const kids = [], mine = new Set(), TTYOF = new Map();
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    async function list() {
+      const r = await run('ps', ['-o', 'pid=,ppid=,rss=,etime=,comm=', '-p', [process.pid, ...mine].join(',')], { timeout: 5000 });
+      const out = [];
+      for (const l of String(r.out || '').split('\\n')) {
+        const m = /^\\s*(\\d+)\\s+(\\d+)\\s+(\\d+)\\s+(\\S+)\\s+(.*)$/.exec(l);
+        if (!m) continue;
+        if (+m[1] !== process.pid && (!mine.has(+m[1]) || +m[2] !== process.pid)) continue;
+        const t = /^(?:(\\d+)-)?(?:(\\d+):)?(\\d+):(\\d+)$/.exec(m[4]);
+        const ageS = t ? (+(t[1] || 0)) * 86400 + (+(t[2] || 0)) * 3600 + (+t[3]) * 60 + (+t[4]) : null;
+        const own = mine.has(+m[1]);
+        // A spawned child has no terminal and is seconds old: both are supplied, consistently, so
+        // its start time (and so its identity) is the same in every reading.
+        out.push({ pid: +m[1], ppid: +m[2], rssKB: +m[3], ageS: own && ageS != null ? ageS + AGE : ageS, command: m[5].trim(), tty: own ? TTYOF.get(+m[1]) : null });
+      }
+      return out;
+    }
+    (async () => {
+      const res = {};
+      try {
+        const mk = (d) => { fs.mkdirSync(d, { recursive: true }); return d; };
+        // A link named claude to /bin/sleep, not a copy: macOS kills a copy of a system binary
+        // run from another folder (SIGKILL at launch), while ps shows the link's own path.
+        const fake = (name) => { const f = path.join(mk(path.join(home, name)), 'claude'); fs.symlinkSync('/bin/sleep', f); return f; };
+        const binA = fake('binA'), binB = fake('binB');
+        const projA = mk(path.join(home, 'www', 'proj-a')), projB = mk(path.join(home, 'www', 'proj-b'));
+        const old = (Date.now() - 3 * H * 1000) / 1000;
+        const transcriptFor = (proj) => {
+          const dir = mk(ai.projectDir(home, fs.realpathSync(proj)));
+          const f = path.join(dir, 'session.jsonl');
+          fs.writeFileSync(f, '{"note":"never read by reckon"}\\n');
+          fs.utimesSync(f, old, old);
+          return { dir, f, mtime: fs.statSync(f).mtimeMs };
+        };
+        const tA = transcriptFor(projA), tB = transcriptFor(projB);
+        res.inside = tA.dir.startsWith(home + path.sep) && tB.dir.startsWith(home + path.sep);
+        const a = spawn(binA, ['60'], { cwd: projA, stdio: 'ignore' });
+        const b = spawn(binB, ['60'], { cwd: projB, stdio: 'ignore' });
+        for (const c of [a, b]) { kids.push(c); mine.add(c.pid); }
+        TTYOF.set(a.pid, 'ttys990'); TTYOF.set(b.pid, 'ttys991');
+        await sleep(400);
+        const aiProbe = {
+          ttyTouchedAt: async (t) => (t === 'ttys990' ? Date.now() - 3 * H * 1000 : t === 'ttys991' ? Date.now() - 60 * 1000 : null),
+          ports: async () => [], ollamaLoaded: async () => null, argsOf: async () => ({}), which: () => null,
+        };
+        const rows = await ai.idleSessions(await list(), { ...ai.defaultProbe(), ...aiProbe }, process.pid);
+        res.rows = rows.map((r) => r.id + ':' + r.confidence);
+        res.wantA = 'ai-session-' + a.pid + ':medium';
+        res.noB = !rows.some((r) => r.id === 'ai-session-' + b.pid);
+        res.noSelf = !rows.some((r) => r.id === 'ai-session-' + process.pid);
+        const rowA = rows.find((r) => r.id === 'ai-session-' + a.pid);
+        res.resume = rowA && rowA.lose.includes("claude --resume");
+        const e = act.createEngine({ processList: list, selfPid: process.pid, minDelayMs: 0, settleMs: 1500,
+          memoryStats: async () => null, memoryPressure: async () => null, ai: aiProbe,
+          log: createLog({ dir: path.join(home, '.cache', 'reckon') }) });
+        const L = await list();
+        const pb = L.find((x) => x.pid === b.pid);
+        const forgedB = { id: 'ai-session-' + b.pid, title: 'forged', confidence: 'medium', lose: 'x', action: { id: 'end-ai-session', label: 'x' },
+          target: { kind: 'ai-session', tool: 'claude', tty: 'ttys991', cwd: fs.realpathSync(projB), dirShown: 'x', resume: 'x',
+            pid: { pid: b.pid, comm: pb.command, startedAt: Date.now() - pb.ageS * 1000 } } };
+        e.remember('pressure', [...rows, forgedB]);
+        const pB = await e.preview({ action: 'end-ai-session', id: 'ai-session-' + b.pid });
+        res.bRefused = !pB.ok && /terminal was used/.test(pB.refused || '');
+        const pA = await e.preview({ action: 'end-ai-session', id: 'ai-session-' + a.pid });
+        const rA = pA.ok ? await e.run({ action: 'end-ai-session', id: 'ai-session-' + a.pid, nonce: pA.nonce }) : pA;
+        res.a = { ok: rA.ok, gone: rA.gone, ran: rA.ran, refused: rA.refused, pid: a.pid };
+        await sleep(200);
+        try { process.kill(b.pid, 0); res.bAlive = true; } catch { res.bAlive = false; }
+        res.untouched = fs.statSync(tA.f).mtimeMs === tA.mtime && fs.statSync(tB.f).mtimeMs === tB.mtime;
+        let lines = [];
+        try { lines = fs.readFileSync(path.join(home, '.cache', 'reckon', 'actions.log'), 'utf8').split('\\n').filter(Boolean).map((l) => JSON.parse(l)); } catch { /* reported below */ }
+        res.logged = lines.some((l) => l.action === 'end-ai-session' && l.info && /claude --resume/.test(l.info.resume || ''));
+      } catch (err) { res.error = String(err && err.stack || err).split('\\n').slice(0, 2).join(' | '); }
+      finally { for (const k of kids) { try { k.kill('SIGKILL'); } catch {} } }
+      console.log(JSON.stringify(res));
+    })();
+  `;
+  const r = spawnSync(process.execPath, ['-e', script], { encoding: 'utf8', timeout: 60000,
+    env: { ...process.env, HOME: home, USERPROFILE: home } });
+  let res;
+  try { res = JSON.parse(String(r.stdout).trim().split('\n').pop()); }
+  catch { fs.rmSync(home, { recursive: true, force: true }); return fail('the sandboxed AI-session test printed nothing readable', String(r.stderr || r.stdout).slice(0, 200)); }
+  fs.rmSync(home, { recursive: true, force: true });
+  if (res.floor || res.error) return fail('the sandboxed AI-session test did not run', res.floor || res.error);
+  if (res.inside) ok('in the sandbox, the transcript folders reckon looks in are inside the temporary HOME, never the real ~/.claude');
+  else fail('the sandbox transcript folder is outside the temporary HOME');
+  if (res.rows && res.rows.length === 1 && res.rows[0] === res.wantA && res.noB && res.noSelf && res.resume) ok('for real: the fake claude whose working folder (read with lsof) and transcript (stat) are quiet is the one row, with its resume command; the busy one and the sandbox itself get none');
+  else fail('the sandbox session rows are wrong', JSON.stringify(res.rows));
+  if (res.bRefused && res.bAlive) ok('for real: a forged button for the session whose terminal was used a minute ago is refused, and that process is still alive');
+  else fail('the busy fake session was not protected', JSON.stringify({ refused: res.bRefused, alive: res.bAlive }));
+  if (res.a && res.a.ok && res.a.gone === 1 && JSON.stringify(res.a.ran) === JSON.stringify(['kill', '-TERM', String(res.a.pid)])) ok('for real: preview, confirm, run sent exactly kill -TERM <pid> to the idle fake claude, measured gone after');
+  else fail('the idle fake claude was not stopped as expected', JSON.stringify(res.a));
+  if (res.untouched) ok('the transcripts were not touched (their modification times are what the test set)');
+  else fail('a transcript changed during the test');
+  if (res.logged) ok('actions.log inside the sandbox has the session\'s resume command');
+  else fail('the sandbox AI-session log line is missing');
+  if (stamp(realLog) === before) ok('the real ~/.cache/reckon/actions.log was not touched by the AI-session tests');
+  else fail('the AI-session tests wrote to the real actions.log');
 }
 
 async function step(name, fn) {

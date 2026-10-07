@@ -28,7 +28,15 @@ Every item carries three things, always: **how much it frees**, **the proof of t
 
 Not a safety toggle, a design constraint. reckon's own files go only inside `~/.cache/reckon/`. It reads your machine, works out what it thinks, and shows you the proof. Anything that changes your machine (sudo, DNS and `/etc/hosts` among it) is handed to you as a command to run yourself.
 
-The one way reckon acts, decided on 2026-10-07: **reckon never does anything you did not click, and never anything outside its table of actions.** On the Memory and Pressure tabs a row it is sure enough about (`high` or `medium`) gets a **Do** button that can quit an app gracefully (it asks to save first), stop orphaned processes, shut iOS simulators down, or quit a Docker VM with no container running. The page sends only the row's id; the server measures the target again, shows a preview with the proof and what you lose, waits for your Confirm and five seconds you can cancel, runs the fixed command with no shell and no sudo, and shows memory before and after. Each one is logged in `~/.cache/reckon/actions.log`.
+The one way reckon acts, decided on 2026-10-07: **reckon never does anything you did not click, and never anything outside its table of actions.** On the Memory and Pressure tabs a row it is sure enough about (`high` or `medium`) gets a **Do** button that can quit an app gracefully (it asks to save first), stop orphaned processes, shut iOS simulators down, quit a Docker VM with no container running, end an idle AI session, stop orphaned MCP or tool servers, or unload a model Ollama keeps in memory (table below). The page sends only the row's id; the server measures the target again, shows a preview with the proof and what you lose, waits for your Confirm and five seconds you can cancel, runs the fixed command with no shell and no sudo, and shows memory before and after. Each one is logged in `~/.cache/reckon/actions.log`.
+
+For people who work with AI tools all day, three of those memory rows, each judged again at the click with the same rules it was offered on:
+
+| Do | Offered only when | What runs |
+|---|---|---|
+| End an idle AI session (`claude`; `codex`, `aider`, `opencode`, `grok` stay copy-only) | older than 6 h, no live child process, its terminal device neither read nor written for 2 h, and the newest transcript for its folder under `~/.claude/projects/` not modified for 2 h (its modification time only: the file is never opened). Never reckon itself, anything reckon runs inside (its terminal, its shell, the agent that started it), a session on reckon's terminal, or a CLI whose parent is an app. If idleness cannot be measured, there is no button | `kill -TERM <pid>`, nothing else. The conversation stays on disk; the row shows `cd <folder> && claude --resume` |
+| Stop orphaned MCP / tool servers (MCP servers, `npx`, `uvx`, language servers) | the root's parent is gone (ppid 1, not launchd, not in an app), older than 1 h, nothing else on its terminal, nothing in its tree listening on a port. Grouped by tool, with the total RSS | `kill -TERM` of the group |
+| Unload an Ollama model | Ollama's own `GET http://127.0.0.1:11434/api/ps` (fixed loopback address, 2 s, no redirect) lists the model at the click, its name passes a strict pattern, and `ollama` is on PATH (otherwise the row says so and has no button). LM Studio and llama.cpp are detected and stay copy-only | `ollama stop <model>`, the name as one argument. Reversible: the model reloads on its next use |
 
 The same engine acts on disk, from the last deep scan, decided by the owner the same day. What is **yours** goes to the Trash, where you can put it back; a **regenerable** cache is removed for good, and the button says which before you click. Every disk target is measured again at the click, and refused if it changed since the scan.
 
@@ -115,8 +123,8 @@ The skills live in the repo, not in the npm package, so they work from a clone, 
 | tab | what it does |
 |---|---|
 | **Overview** | the decisions, ordered by how much they free. The screen that opens |
-| **Memory** | the kernel's own memory-pressure level first, then what is using RAM now, grouped by app, how much each changed since you opened, and per group the processes, the proof, what you lose and, where it is sure enough, a **Do** button |
-| **Pressure** | what is stealing time from the machine right now, counted in seconds instead of bytes: orphaned swarms, stale sessions, dev servers nobody is using |
+| **Memory** | the kernel's own memory-pressure level first, then what is using RAM now, grouped by app, how much each changed since you opened, and per group the processes, the proof, what you lose and, where it is sure enough, a **Do** button; models a local Ollama keeps loaded, one row each |
+| **Pressure** | what is stealing time from the machine right now, counted in seconds instead of bytes: orphaned swarms, idle AI sessions, orphaned MCP and tool servers, dev servers nobody is using |
 | **Disk** | where the space went, folder by folder, with a verdict: `disposable` · `yours` · `cannot judge` |
 | **Internet** | which link is carrying traffic, the round trip to your router and to the resolvers you already use, and — behind their own buttons, with the cost stated first — throughput and the Wi-Fi radio |
 | **Checks** | what is broken and has a fix |
@@ -336,7 +344,7 @@ surface. Nothing else needs to change.
 
 - **It deletes nothing you did not click.** The only things it can do are the rows of the table
   in `lib/act.js` (memory: quit an app, stop processes, shut simulators down, quit an idle Docker
-  VM; disk: the table above), each after a preview, a Confirm and a five-second countdown. The
+  VM, end an idle AI session, stop orphaned tool servers, unload an Ollama model; disk: the table above), each after a preview, a Confirm and a five-second countdown. The
   disk actions run on a Mac; on Windows those rows stay text to copy. Some things will **never** get a button: anything that needs
   `sudo`, DNS changes, `/etc/hosts`, Time Machine snapshots, `purge` (a placebo: it empties a file
   cache macOS already treats as free memory), an automatic `kill -9` (only ever offered as its

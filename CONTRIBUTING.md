@@ -15,7 +15,9 @@ command, and stops. You run it.
 **The one exception, decided by the owner on 2026-10-07:** *reckon never does anything you
 did not click, and never anything outside the table of actions.* `lib/act.js` holds that
 table (memory: quit an app gracefully, stop orphaned processes with SIGTERM and, as a separate
-later click, SIGKILL, shut iOS simulators down, quit an idle Docker Desktop; disk: clear a cache
+later click, SIGKILL, shut iOS simulators down, quit an idle Docker Desktop, end an idle AI
+session with SIGTERM, stop orphaned MCP or tool servers with SIGTERM, `ollama stop` a loaded model;
+disk: clear a cache
 the table names, remove a parked repository's `node_modules`, `git worktree remove` without
 `--force`, move what is yours to the Trash, prune Docker without `-a` or `--volumes`, empty the
 Trash after two confirmations). A file is removed only by `safeRemove()` in that file. Everything else
@@ -34,6 +36,10 @@ still ends as text. What an action must have, or the pull request is declined:
   same start time; same app; still idle) and builds the argv from the table. A path or a
   command in the request body is ignored. A target that changed is refused.
 - **Only `high` and `medium` rows.** A `low` row stays copy-only.
+- **An AI session is ended only when idleness is measured, never guessed** (lib/aitools.js). Never
+  reckon itself, anything it runs inside, a session on its terminal, or one with a live child.
+  "Cannot judge" (no terminal, no working folder, no transcript) is no button. A transcript is
+  known by its modification time only: a change that opens one is declined.
 - **Before and after.** The machine is measured again after the command, and one line goes
   to `~/.cache/reckon/actions.log`.
 
@@ -68,6 +74,14 @@ conditions that must never be loosened: it runs **only through macOS's own
 reckon's own), and only on an **explicit click** — never on page load, a timer, or any code
 path a user didn't just trigger. A pull request that adds a second network call, or that makes the
 speed test start itself, breaks this constraint even if the call looks harmless.
+
+**One loopback exception, decided by the owner on 2026-10-07:** `lib/aitools.js` reads which
+models a local Ollama holds with one `GET http://127.0.0.1:11434/api/ps`, through `node:http`.
+It is not a third party (it is a program on the same machine, on the loopback address it listens
+on), and the conditions are held by `bin/check.js`: the host and port are constants, never read
+from a setting or an environment variable; no redirect is followed; two seconds and one megabyte
+at most; only when an Ollama process is already running. A second address, or making this one
+configurable, needs its own decision here.
 
 ## 4. Everything user-facing is in English
 

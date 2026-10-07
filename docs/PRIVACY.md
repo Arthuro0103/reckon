@@ -39,7 +39,9 @@ no accounts, no API keys, and no server it talks to except itself.
 - Runs a command, or removes a file, itself in exactly one case: you clicked **Do** on a row,
   read the preview, clicked Confirm and let a five-second countdown finish. What runs comes from
   a fixed table in `lib/act.js` and never needs `sudo`:
-  - memory: quit an app, stop processes, shut simulators down, quit an idle Docker Desktop;
+  - memory: quit an app, stop processes, shut simulators down, quit an idle Docker Desktop,
+    end an idle AI session (`kill -TERM` of one `claude` process), stop orphaned MCP or tool
+    servers (`kill -TERM` of the group), unload a model from Ollama (`ollama stop <model>`);
   - disk (macOS): clear a cache reckon's table names (with the tool's own cleaner when there is
     one: `npm`, `brew`, `go`, `pip`, `uv`, `qlmanage`; otherwise reckon's own `safeRemove()`),
     remove the `node_modules` of a parked repository, `git worktree remove` a merged worktree
@@ -53,6 +55,25 @@ no accounts, no API keys, and no server it talks to except itself.
   That file stays on your machine like everything else here. Moving to the Trash and emptying it
   go through Finder when `/usr/bin/trash` is missing, so macOS may ask once whether the app that
   runs reckon may control Finder.
+- To judge the AI-tool rows on the Pressure and Memory tabs, reads, on your machine only:
+  - **When a terminal was last used**: the access and modification times of its device file in
+    `/dev` (`ttys003`), with `stat`. Nothing is read from the terminal itself.
+  - **Which folder an AI session runs in**: `lsof -d cwd` on that one process.
+  - **When a Claude Code conversation was last written**: the modification time (`stat`) of the
+    `*.jsonl` files in `~/.claude/projects/<that folder>/`. reckon lists the names in that folder
+    and stats them; it **never opens a transcript and never reads a word of a conversation**.
+    `bin/check.js` fails if `lib/aitools.js` ever opens a file.
+  - **The command line of an orphaned process** (parent gone, older than an hour), to recognise an
+    MCP server, `npx`, `uvx` or a language server. It is matched in memory and dropped: only a
+    tool name (`mcp-server-filesystem`) reaches the screen, and nothing of it is stored.
+  - **Which models Ollama has loaded**, when an Ollama process is running: one `GET` to
+    `http://127.0.0.1:11434/api/ps`, the loopback address Ollama itself listens on. The address is
+    a constant in the code, never read from a setting or an environment variable; no redirect is
+    followed; it gives up after two seconds. Nothing is sent to Ollama but that request, and no
+    prompt or measurement ever is.
+
+  Whether a session is ended, which one, its terminal, its folder and its resume command go into
+  `~/.cache/reckon/actions.log` on your disk, like every other action.
 - Never gets a button, whatever the row says: anything that needs `sudo`, DNS, `/etc/hosts`,
   Time Machine snapshots, `purge`, an automatic `kill -9`, `--force` on a worktree, `-a` or
   `--volumes` on a Docker prune, truncating a container log, a repository or a vault, and any
@@ -71,7 +92,8 @@ That is the rule, and it is narrower and more checkable than "no outbound reques
 - **No accounts, no sign-in, no API keys.** There is nothing to leak because there is
   nothing issued.
 - **No LLM of any kind.** No prompt, no measurement, and no scan result is ever sent to a
-  language model, local or remote.
+  language model, local or remote. (reckon asks a local Ollama which models it has loaded, and
+  can ask it to unload one after your click; it never sends it a prompt.)
 - **No third-party dependencies.** `package.json` has an empty dependencies list. There is
   no supply chain to audit because there is no supply.
 - **No data leaves the machine**, except the one case below.
@@ -100,9 +122,12 @@ the Internet tab and click the speed test, this exception never applies to you.
   per-launch token — check `server.js`; `node bin/check.js` asks it over a real socket.
 - Search the codebase for any hostname other than a loopback address or the speed-test
   endpoint; there isn't one.
-- Nothing in `lib/` makes an HTTP request. The only network code is the DNS resolver probe
-  (which queries the resolvers already configured on your machine, not a third party) and
-  the speed test described above, which `lib/platform` runs as the `networkQuality` command.
+- Nothing in `lib/` makes an HTTP request to another machine. The only network code is the DNS
+  resolver probe (which queries the resolvers already configured on your machine, not a third
+  party), the speed test described above, which `lib/platform` runs as the `networkQuality`
+  command, and one loopback request in `lib/aitools.js` to a local Ollama
+  (`http://127.0.0.1:11434/api/ps`), made only when an Ollama process is running. That request
+  never leaves the machine.
 
 If a future version of this document stops matching the code, that's a bug in the
 document — file it as one.
@@ -140,5 +165,7 @@ grep -rn "http://\|https://" lib/ server.js web/app.js
 ```
 
 Everything it returns is either a comment, a documentation URL, or the DNS-provider
-addresses listed in the DNS tab. There is no HTTP client in the server: `lib/sh.js` runs
-local commands, and that is the only way this program reaches anything.
+addresses listed in the DNS tab, plus the one loopback address of a local Ollama
+(`http://127.0.0.1:11434/api/ps` in `lib/aitools.js`), which never leaves the machine. Apart from
+that one loopback read, there is no HTTP client in the server: `lib/sh.js` runs local commands,
+and that is the only way this program reaches anything.

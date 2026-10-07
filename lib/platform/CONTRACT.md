@@ -217,6 +217,24 @@ own `Info.plist`. `null` for a process that is not inside an app, or whose bundl
 read. It is a reading: the only thing that acts on the answer is `lib/act.js`, and only after a
 click. A platform without it gets no "quit the app" button.
 
+### `ttyActivity(tty)` → number | null · **free** · OPTIONAL
+When the terminal `tty` (a name as `ps` prints it, `ttys003`) was last used, in ms since the
+epoch: the later of the device file's atime and mtime. A stat, nothing read from the device.
+`null` for any other name or when the device is gone. The idle-AI-session row is offered only
+when this can be read; without it every session is "cannot judge" and has no button.
+
+### `processCwd(pid)` → string | null · **light** · OPTIONAL
+The working folder of one process. Only the path, never a file in it. `null` when it cannot be
+read. Used to find which `~/.claude/projects/<folder>` holds a session's transcripts.
+
+### `processArgs(pids)` → object | null · **light** · OPTIONAL
+```js
+{ 4121: 'node /Users/me/.npm/_npx/9f/node_modules/.bin/mcp-server-filesystem /Users/me' }
+```
+The full command lines of the given pids only, never the whole table. `null` when the tool did
+not answer. The caller keeps a tool name it matched and nothing else: the command line is never
+stored, logged or shown. Without it no orphaned MCP or tool server is recognised.
+
 ### `selfProcess(pid)` → object | null · **light**
 ```js
 { pid: 8412, cpuPct: 0.28, rssKB: 47104, elapsed: '02:14:07' }
