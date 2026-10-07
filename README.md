@@ -11,7 +11,7 @@ It started because my computer felt painfully slow. An AI assistant went through
 That is one machine and one author, so read it as the story of why the tool exists, not as a benchmark. Three decisions came out of it:
 
 1. **A decision, not a treemap.** Most disk tools draw the folders and leave the thinking to you. reckon opens with what you can free, and why each item is safe.
-2. **It never deletes anything.** It reads your machine, works out what it thinks, hands you the command, and stops. You run it.
+2. **It never deletes anything.** It reads your machine, works out what it thinks, hands you the command, and stops. You run it. The one exception is memory: a few fixed actions, each behind a preview and your click (below).
 3. **"Cannot judge" is an answer.** It only calls something disposable when it can prove the machine rebuilds it. Everything else it names and leaves alone.
 
 ![The Overview tab: "You can free 9.95 GB", the items behind that number, and what changed since the last scan](docs/img/overview.png)
@@ -27,6 +27,8 @@ Every item carries three things, always: **how much it frees**, **the proof of t
 ### It never deletes anything
 
 Not a safety toggle, a design constraint. `reckon` writes only inside `~/.cache/reckon/`. It reads your machine, works out what it thinks, hands you the command, and stops. You run it.
+
+One exception, for memory only, decided on 2026-10-07: **reckon never does anything you did not click, and never anything outside its table of actions.** On the Memory and Pressure tabs a row it is sure enough about (`high` or `medium`) gets a **Do** button that can quit an app gracefully (it asks to save first), stop orphaned processes, shut iOS simulators down, or quit a Docker VM with no container running. The page sends only the row's id; the server measures the target again, shows a preview with the proof and what you lose, waits for your Confirm and five seconds you can cancel, runs the fixed command with no shell and no sudo, and shows memory before and after. Each one is logged in `~/.cache/reckon/actions.log`.
 
 That rule is why the interesting work is in the *judgement*, not in the deleting. A tool that deletes has to be conservative to be safe. A tool that only recommends can afford to say exactly what it found and exactly how sure it is.
 
@@ -86,7 +88,7 @@ The repo carries step-by-step skills for agents that have a shell, so you can sa
 | `/reckon-watch` | one reading, or the watcher on and off (only when you ask by name; `--corner` and `--pet` only when you ask for them) |
 | `/reckon-report` | writes the diagnostic file for you to read before you share it |
 
-Other agents (Cursor, Codex, Gemini CLI) can read [AGENTS.md](AGENTS.md), which holds the same rules in 35 lines. Every skill carries one rule above the rest: **the agent never runs a command that reckon prints.** It shows it to you, and you run it. A test in `bin/check.js` refuses a skill that could be read as permission to do otherwise.
+Other agents (Cursor, Codex, Gemini CLI) can read [AGENTS.md](AGENTS.md), which holds the same rules in 39 lines. Every skill carries one rule above the rest: **the agent never runs a command that reckon prints.** It shows it to you, and you run it. The same goes for the panel's "Do" buttons: an agent never calls `/api/act/*` and never clicks them; it points to the row and you click. A test in `bin/check.js` refuses a skill that could be read as permission to do otherwise.
 
 The skills live in the repo, not in the npm package, so they work from a clone, not from `npx`.
 
@@ -97,7 +99,7 @@ The skills live in the repo, not in the npm package, so they work from a clone, 
 | tab | what it does |
 |---|---|
 | **Overview** | the decisions, ordered by how much they free. The screen that opens |
-| **Memory** | what is using RAM now, grouped by app, and how much each changed since you opened |
+| **Memory** | the kernel's own memory-pressure level first, then what is using RAM now, grouped by app, how much each changed since you opened, and per group the processes, the proof, what you lose and, where it is sure enough, a **Do** button |
 | **Pressure** | what is stealing time from the machine right now, counted in seconds instead of bytes: orphaned swarms, stale sessions, dev servers nobody is using |
 | **Disk** | where the space went, folder by folder, with a verdict: `disposable` · `yours` · `cannot judge` |
 | **Internet** | which link is carrying traffic, the round trip to your router and to the resolvers you already use, and — behind their own buttons, with the cost stated first — throughput and the Wi-Fi radio |
@@ -301,8 +303,12 @@ surface. Nothing else needs to change.
 
 ## What it does not do yet
 
-- **It deletes nothing, and that is permanent.** There is no execute button and there will not
-  be one.
+- **It deletes nothing.** The only things it can do are the memory actions in `lib/act.js`
+  (quit an app, stop processes, shut simulators down, quit an idle Docker VM), each after a
+  preview, a Confirm and a five-second countdown. Some things will **never** get a button:
+  anything that needs `sudo`, DNS changes, `/etc/hosts`, Time Machine snapshots, `purge` (a
+  placebo: it empties a file cache macOS already treats as free memory) and an automatic
+  `kill -9`, which is only ever offered as its own click after a polite stop was ignored.
 - **It follows up by comparison, not by watching.** It keeps exactly one scan back. Scan again
   and the Overview states free space then and now, and names the items that were on the list and
   are not any more. It does NOT claim to have caused the difference: free space moves because a
@@ -323,9 +329,11 @@ surface. Nothing else needs to change.
   thousands in a community-maintained list. For real coverage the answer is a filtering
   resolver, not `/etc/hosts`.
 - **Memory history dies with the process.** It lives in server memory, capped at 120 points.
-- **No authentication** — and none is needed: the server refuses any connection that is not
-  loopback, and listens on `127.0.0.1` only. Do not expose it. This panel can see the whole
-  machine, and that is a map of it.
+- **No login** — the server refuses any connection that is not loopback, and listens on
+  `127.0.0.1` only. Do not expose it. This panel can see the whole machine, and that is a map
+  of it. The two routes that act (`POST /api/act/preview` and `/api/act/run`) also demand the
+  exact Host, an Origin of its own when one is sent, and a random token made fresh each time
+  the server starts, so another web page open in your browser cannot reach them.
 - **macOS and Windows. Linux is not written yet.** Every reading goes through `lib/platform`,
   which has 30 required capabilities and a handful of optional ones; `darwin.js` and `win32.js`
   implement all 30, and `lib/platform/linux.js` does not exist — the panel says so by name
@@ -335,8 +343,10 @@ surface. Nothing else needs to change.
 ## Contributing
 
 The one rule: **nothing in this repository may delete, move or overwrite anything outside
-`~/.cache/reckon/`.** A pull request that adds an execute button will be declined, however
-convenient it looks.
+`~/.cache/reckon/`, and nothing may change the machine except an action in the fixed table in
+`lib/act.js`, started by a click.** A pull request that runs a state-changing command anywhere
+else, adds an action without its proof, what you lose and a preview, or adds one that needs
+`sudo`, will be declined. `bin/check.js` refuses all three.
 
 `node bin/check.js` has to pass. CI runs it on Linux with Node 18, 20 and 22, and on macOS 15 with
 Node 22, where it also compiles `native/pet.swift` and compares its drawing numbers with the browser

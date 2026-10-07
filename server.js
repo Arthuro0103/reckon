@@ -9,6 +9,9 @@ const dns = require('./lib/dns');
 const blocklist = require('./lib/blocklist');
 const network = require('./lib/network');
 const pressure = require('./lib/pressure');
+// ---- phase 2: action engine (requires) -------------------------------------
+const act = require('./lib/act');
+// ---- end phase 2 requires ---------------------------------------------------
 
 // ---- phase 1: open-only actions (separate block, to ease merging)
 const opener = require('./lib/open');
@@ -119,13 +122,38 @@ const server = http.createServer(async (req, res) => {
       if (!OPENED.groups) OPENED.groups = groups;   // the zero mark for "what grew since you opened"
       HISTORY.push({ t: Date.now(), vm: d.memory.vm, swap: d.memory.swap, groups });
       while (HISTORY.length > MAX_POINTS) HISTORY.shift();
+      act.remember('memory', [...(d.memory.groups || []), ...(d.memory.rows || [])]);   // phase 2
       return json(res, { ...d, history: HISTORY, opened: OPENED });
     }
 
     // The Pressure tab. Cheap — one `ps`, one `launchctl list`, one `lsof` and
     // a third of a second of deliberate arithmetic — but the arithmetic is the
     // point, so it is behind its own route and never runs on load.
-    if (route === '/api/pressure') return json(res, await pressure.collect());
+    // POST because a new best time is written to the baseline file: a GET must not write.
+    if (route === '/api/pressure' && req.method === 'GET') {
+      res.writeHead(405, { allow: 'POST', 'content-type': 'text/plain; charset=utf-8' });
+      return res.end('use POST: this reading can update the baseline file');
+    }
+    if (route === '/api/pressure') {
+      const d = await pressure.collect();
+      act.remember('pressure', d.rows);   // phase 2: the ids a click may name
+      return json(res, d);
+    }
+
+    // ---- phase 2: action engine routes ---------------------------------------
+    // The browser sends { action, id } and nothing else; lib/act.js finds the id
+    // in the readings above, measures it again and runs only from its own table.
+    // Agents never call these: only a person clicking "Do" in the panel does.
+    // Host, Origin and the token are checked for every POST at the top of the handler.
+    if (route === '/api/act/preview' && req.method === 'POST') {
+      const body = await readBody(req);
+      return json(res, await act.preview(body));
+    }
+    if (route === '/api/act/run' && req.method === 'POST') {
+      const body = await readBody(req);
+      return json(res, await act.run(body));
+    }
+    // ---- end phase 2 routes ----------------------------------------------------
 
     if (route === '/api/cache') {
       const c = scan.readCache();
@@ -207,7 +235,6 @@ const server = http.createServer(async (req, res) => {
     // target, and only a path the last scan measured. Nothing here modifies anything.
     if (route === '/api/open' && req.method === 'GET') return json(res, { available: opener.available() });
     if (route === '/api/open' && req.method === 'POST') {
-      // TODO(merge): token guard from phase 0
       const body = await readBody(req);
       const r = await opener.open(body.id, body.target, { scanData: scan.readCache() });
       return json(res, r, r.ok ? 200 : 400);

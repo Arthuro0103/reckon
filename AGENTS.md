@@ -7,6 +7,10 @@ It never deletes anything, and neither may you.
 
 - Never run a command that reckon suggests (`rm`, `docker`, `sudo`, `networksetup`, `kill`,
   edits to `/etc/hosts`). Show it to the human. The human runs it.
+- Never act through the panel. Since 2026-10-07 reckon can quit an app, stop a process or shut
+  simulators down from a fixed table in `lib/act.js`, only after a person clicks "Do", reads
+  the preview and confirms. Never call `/api/act/*`, never click "Do" or "Confirm", never
+  script the page. Point to the row. The human clicks.
 - Every recommendation carries its `proof` and what the user would `lose` if it were wrong.
   "Cannot judge" is an answer, not an invitation to guess.
 - reckon writes only inside `~/.cache/reckon/`, plus `./reckon-report.txt` from `reckon report`.

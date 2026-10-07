@@ -52,7 +52,7 @@ function openBtn(id, label, target) {
   if (!state.openers.includes(id)) return null;
   const btn = el('button', { class: 'copy', onclick: async () => {
     try {
-      const r = await fetch('/api/open', { method: 'POST', headers: { 'content-type': 'application/json' },
+      const r = await fetch('/api/open', { method: 'POST', headers: authed({ 'content-type': 'application/json' }),
         body: JSON.stringify(target ? { id, target } : { id }) });
       const j = await r.json().catch(() => ({}));
       btn.textContent = j.ok ? 'opened' : (j.error || 'could not open');
@@ -611,6 +611,7 @@ function memory(d) {
     at('c4', tile('Total RAM', total.toFixed(0), 'GB',
       'Soldered. On Apple Silicon it cannot be increased — only fitted into better.')),
   ));
+  memoryActable(root, d);   // phase 2: pressure headline, per-group proof/lose/action
 }
 
 function chartGroups(m, base) {
@@ -1512,7 +1513,7 @@ function pressure(d) {
   }
 
   const f = d.probe.factor;
-  const swapPct = d.swap ? Math.round(d.swap.share * 100) : null;
+  const swapPct = d.swap ? Math.min(100, Math.round(d.swap.ofRam * 100)) : null;
 
   root.append(el('div', { class: 'verdict' },
     el('p', { class: 'headline' },
@@ -1564,20 +1565,189 @@ function pressure(d) {
         el('p', {}, el('b', {}, 'Proof. '), r.proof),
         el('p', {}, el('b', {}, 'What you lose if this is wrong. '), r.lose),
         commandBlock(r.command, r.confidence === 'low'
-          ? 'read the first line before you run the second — this panel runs nothing'
-          : 'this panel runs nothing. you run it.')),
+          ? 'read the first line before you run the second — this panel runs nothing for it'
+          : 'or copy it and run it yourself'),
+        actButton(r)),
     }))));
   }
 }
 
 async function loadPressure() {
   try {
-    state.pressure = await get('/api/pressure');
+    state.pressure = await get('/api/pressure', { method: 'POST', headers: authed() });
     pressure(state.pressure);
     $('#count-pressure').textContent = state.pressure.rows.length || '';
   } catch (e) {
     startupFailure('measuring pressure (/api/pressure)', e);
   }
+}
+
+/* ============================================================ ACTIONS (phase 2)
+   The only place on this page that can make the machine change, and only through
+   lib/act.js on the server. The page sends { action, id } — never a path, never a
+   command — and every step is a separate click:
+
+     Do  ->  preview, measured again on the server just now (what, how much, the
+             proof, what you lose, whether it can be undone, the exact command)
+         ->  Confirm  ->  five seconds with Cancel  ->  before and after.
+
+   The server refuses a run that did not have a preview, or that comes sooner than
+   five seconds after it, so the countdown is a rule and not a decoration. */
+
+async function actPost(route, body) {
+  const r = await fetch(route, { method: 'POST', headers: authed({ 'content-type': 'application/json' }), body: JSON.stringify(body) });
+  if (r.status === 403) throw new Error(`${route} was refused (${await r.text()})`);
+  if (!r.ok) throw new Error(`${route} returned ${r.status}`);
+  return r.json();
+}
+
+// The Do button for a row, or nothing. Only rows the server gave an `action` get one,
+// and the server only gives one to `high` and `medium` rows.
+function actButton(row) {
+  if (!row || !row.action || row.confidence === 'low') return null;
+  const slot = el('div', { class: 'act-slot' });
+  const btn = el('button', { class: 'act-do', onclick: () => actPreview(slot, row.action.id, row.id) },
+    'Do: ' + row.action.label);
+  return el('div', { class: 'act' }, btn, slot);
+}
+
+async function actPreview(slot, action, id) {
+  slot.textContent = '';
+  slot.append(el('p', { class: 'loading' }, 'measuring it again before anything happens'));
+  let p;
+  try { p = await actPost('/api/act/preview', { action, id }); }
+  catch (e) { slot.textContent = ''; slot.append(el('p', { class: 'act-refused' }, e.message)); return; }
+  slot.textContent = '';
+  if (!p.ok) { slot.append(el('p', { class: 'act-refused' }, 'Nothing will be done. ', p.refused)); return; }
+
+  const cancel = el('button', { class: 'copy', onclick: () => { slot.textContent = ''; } }, 'cancel');
+  const confirm = el('button', { class: 'act-do', onclick: () => actCountdown(slot, p) }, 'Confirm');
+  slot.append(el('div', { class: 'act-card' },
+    el('h4', {}, p.confirm),
+    el('p', {}, el('b', {}, 'What. '), p.what),
+    p.mb != null ? el('p', {}, el('b', {}, 'How much. '), `about ${p.mb} MB of resident memory, measured just now`) : null,
+    el('p', {}, el('b', {}, 'Proof, measured now. '), p.proof),
+    el('p', {}, el('b', {}, 'What you lose. '), p.lose),
+    el('p', {}, el('b', {}, p.reversible ? 'Can be undone. ' : 'Cannot be undone. '), p.undo),
+    el('pre', { class: 'act-argv' }, p.command),
+    el('div', { class: 'act-actions' }, confirm, cancel)));
+}
+
+function actCountdown(slot, p) {
+  slot.textContent = '';
+  let left = p.countdownS || 5;
+  const n = el('b', {}, String(left));
+  const line = el('p', { class: 'act-count' }, 'Running in ', n, ' s. ');
+  let timer = null;
+  const cancel = el('button', { class: 'copy', onclick: () => {
+    clearInterval(timer); slot.textContent = '';
+    slot.append(el('p', { class: 'act-refused' }, 'Cancelled. Nothing was done.'));
+  } }, 'cancel');
+  slot.append(el('div', { class: 'act-card' }, line, el('div', { class: 'act-actions' }, cancel)));
+  timer = setInterval(() => {
+    left -= 1;
+    n.textContent = String(Math.max(0, left));
+    if (left > 0) return;
+    clearInterval(timer);
+    actRun(slot, p);
+  }, 1000);
+}
+
+async function actRun(slot, p) {
+  slot.textContent = '';
+  slot.append(el('p', { class: 'loading' }, 'running, then measuring again'));
+  let r;
+  try { r = await actPost('/api/act/run', { action: p.action, id: p.id, nonce: p.nonce }); }
+  catch (e) { slot.textContent = ''; slot.append(el('p', { class: 'act-refused' }, e.message)); return; }
+  slot.textContent = '';
+  actResult(slot, p, r);
+}
+
+function actResult(slot, p, r) {
+  if (!r.ok && r.refused) { slot.append(el('p', { class: 'act-refused' }, 'Nothing was done. ', r.refused)); return; }
+  const fmt = (s) => (s ? `pressure ${s.pressure ?? 'not read'} · ${s.availableMB ?? '?'} MB free or reclaimable · ${s.compressedMB ?? '?'} MB compressed` : 'not measured');
+  const card = el('div', { class: 'act-card act-result' },
+    el('h4', {}, r.dryRun ? 'Dry run: nothing was run' : r.ok ? 'Done' : 'It did not take'),
+    el('pre', { class: 'act-argv' }, (r.ran || r.argv || []).join(' ')),
+    r.message ? el('p', {}, r.message) : null,
+    r.dryRun ? null : el('p', {}, `${r.gone} process(es) gone, ${(r.stillAlive || []).length} still running. `
+      + (r.freedKB ? `They held about ${Math.round(r.freedKB / 1024)} MB.` : '')),
+    el('p', {}, el('b', {}, 'Before. '), fmt(r.before)),
+    r.after ? el('p', {}, el('b', {}, 'After. '), fmt(r.after)) : null,
+    el('p', { class: 'act-note' }, 'Two readings, side by side. Memory moves for other reasons too, so this is not a claim about what caused the difference.'),
+    r.logged === false ? el('p', { class: 'act-refused' }, 'The result could not be written to ~/.cache/reckon/actions.log.') : null);
+  slot.append(card);
+
+  // SIGKILL is never automatic: it is offered, after ten seconds, as its own click.
+  if (r.killOffer) {
+    const wait = el('p', { class: 'act-note' }, `${r.killOffer.count} process(es) ignored the polite stop. A forced stop is offered in ${r.killOffer.inS} s, as a separate click.`);
+    card.append(wait);
+    setTimeout(() => {
+      wait.replaceWith(el('div', { class: 'act-actions' }, el('button', { class: 'act-do',
+        onclick: () => actPreview(slot, 'kill-processes', r.killOffer.id) }, `Force stop the ${r.killOffer.count} still running (SIGKILL)`)));
+    }, r.killOffer.inS * 1000);
+  }
+  card.append(el('div', { class: 'act-actions' }, el('button', { class: 'copy',
+    onclick: () => goTo(state.tab, true) }, 'measure again')));
+}
+
+// The Memory tab, made actionable: the kernel's own pressure level as the headline,
+// then every group and every extra row with its proof, what you lose, and a button
+// where the confidence earns one.
+const PRESSURE_WORDS = {
+  normal: 'The system has room. Nothing here needs doing.',
+  warning: 'macOS is compressing memory and may be swapping. Quitting the biggest app you are not using is what helps.',
+  critical: 'macOS is about to ask you to quit apps. Every second here is spent moving memory around.',
+};
+
+function memoryActable(root, d) {
+  const m = d.memory;
+  const level = m.pressure;
+  root.prepend(el('div', { class: 'verdict mem-level' },
+    el('p', { class: 'headline' }, 'Memory pressure: ', el('em', {}, level ? level.label : 'not read')),
+    el('p', { class: 'summary' }, level
+      ? `${PRESSURE_WORDS[level.label] || ''} This is the kernel's own verdict (kern.memorystatus_vm_pressure_level = ${level.level}), the number macOS itself acts on.`
+      : 'This system did not say how pressed its memory is, so no verdict is claimed. The groups below are still measured.')));
+
+  const rows = (m.rows || []);
+  root.append(el('div', { class: 'section' }, el('h2', {}, 'What you can give back')));
+  for (const r of rows) {
+    root.append(grid(at('c12', card({
+      title: r.title, sub: `${r.mb} MB · confidence: ${r.confidence}`,
+      shape: el('div', {},
+        el('p', {}, el('b', {}, 'Proof. '), r.proof),
+        el('p', {}, el('b', {}, 'What you lose if this is wrong. '), r.lose),
+        commandBlock(r.command, 'or copy it and run it yourself'),
+        actButton(r)),
+    }))));
+  }
+
+  const list = el('div', { class: 'act-groups' });
+  for (const g of (m.groups || []).slice(0, 12)) {
+    if (g.proof == null) continue;
+    const procs = (g.procs || []).map((p) => [p.pid, Math.round(p.rssKB / 1024), (p.cpu ?? 0).toFixed(1), short(p.comm)]);
+    list.append(el('details', { class: 'act-group' },
+      el('summary', {}, el('b', {}, g.name), ` · ${gb(kb2gb(g.rssKB))} GB · ${g.n} process${g.n > 1 ? 'es' : ''}`,
+        g.action ? ` · can ${g.action.label.toLowerCase()}` : ''),
+      el('p', {}, el('b', {}, 'Proof. '), g.proof),
+      el('p', {}, el('b', {}, 'What you lose if this is wrong. '), g.lose),
+      procs.length ? tableOf(['pid', 'MB', 'cpu %', 'executable'], procs) : null,
+      g.command ? commandBlock(g.command, g.action ? 'or copy it and run it yourself' : 'shown for reference; there is no button for this group') : null,
+      actButton(g)));
+  }
+  root.append(list);
+  root.append(freeRamCard());
+}
+
+// Fixed, on purpose: the button every memory app has, and the reason this one does not.
+function freeRamCard() {
+  return grid(at('c12', card({
+    title: 'Why there is no "free RAM" button',
+    sub: 'The button other memory tools sell is a placebo, and this panel will not draw one.',
+    shape: el('div', {},
+      el('p', {}, 'Those buttons run `purge` or something like it. It throws away the file cache: copies of files macOS kept in memory because they were read recently. That memory was already free in every sense that matters — the system hands it to any app that asks, instantly — and the cache refills the moment apps read their files again, so the next minute is slower, not faster. `purge` also needs sudo, which this panel never uses.'),
+      el('p', {}, 'Memory comes back for real only when whatever holds it lets go: quitting the app that holds it, stopping orphaned processes, shutting simulators down, quitting a Docker VM with nothing running. Those are the buttons above, each with its proof and what you lose.')),
+  })));
 }
 
 /* ------------------------------------------------------------------ tabs */

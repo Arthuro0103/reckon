@@ -29,6 +29,12 @@ no accounts, no API keys, and no server it talks to except itself.
   writes outside that folder.
 - Writes command **text** to the screen for you to read and run yourself — DNS changes
   and `/etc/hosts` blocklist entries included. It does not run those commands.
+- Runs a command itself in exactly one case: you clicked **Do** on a memory row, read the
+  preview, clicked Confirm and let a five-second countdown finish. The command comes from a
+  fixed table in `lib/act.js` (quit an app, stop processes, shut simulators down, quit an idle
+  Docker Desktop), never needs `sudo`, and every one is recorded on your own disk in
+  `~/.cache/reckon/actions.log`: when, what, on which process or app, and memory before and
+  after. That file stays on your machine like everything else here.
 
 ## What reckon does not do
 

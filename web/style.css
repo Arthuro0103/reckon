@@ -356,3 +356,44 @@ button.action:hover { filter: brightness(1.08); }
   font-size: 15px; line-height: 1; padding: 2px 5px; border-radius: 3px;
 }
 .chip button:hover { color: var(--ink); background: var(--line2); }
+
+/* ---------------------------------------------------- actions (phase 2)
+   The one button that changes the machine. No new colour: the accent is the
+   interface cyan the copy button already uses on hover, and "cannot be undone"
+   or "refused" is said in words, with the same edge line as the shell note. */
+.act { margin-top: 12px; }
+button.act-do {
+  background: var(--cyan-v); border: 1px solid var(--cyan); color: var(--ink);
+  font: 12.4px var(--mono); padding: 5px 13px; border-radius: 4px; cursor: pointer;
+}
+button.act-do:hover { background: var(--bg3); }
+.act-slot { margin-top: 10px; max-width: 84ch; }
+.act-card {
+  background: var(--bg); border: 1px solid var(--line2); border-radius: 6px;
+  padding: 12px 14px; font-size: 13.8px; color: var(--ink2);
+}
+.act-card h4 { margin: 0 0 8px; font-size: 14.5px; color: var(--ink); font-weight: 600; }
+.act-card p { margin: 6px 0; overflow-wrap: anywhere; }
+.act-card p b { color: var(--ink); font-weight: 600; }
+.act-argv {
+  margin: 10px 0 0; background: var(--bg2); border: 1px solid var(--line);
+  border-radius: 5px; padding: 8px 11px; font: 12.2px/1.5 var(--mono); color: var(--ink);
+  white-space: pre-wrap; overflow-wrap: anywhere;
+}
+.act-actions { display: flex; gap: 10px; align-items: center; margin-top: 10px; }
+.act-count { font: 14px var(--mono); color: var(--ink); }
+.act-refused {
+  margin: 6px 0; font-size: 13.4px; color: var(--ink2);
+  border-left: 2px solid var(--edge); padding: 2px 0 2px 11px;
+}
+.act-result h4 { color: var(--cyan); }
+.act-note { font-size: 12.4px; color: var(--ink3); }
+.act-groups { display: flex; flex-direction: column; gap: 8px; margin-bottom: 22px; }
+.act-group {
+  background: var(--bg2); border: 1px solid var(--line); border-radius: 6px; padding: 10px 14px;
+  font-size: 13.8px; color: var(--ink2);
+}
+.act-group summary { cursor: pointer; color: var(--ink2); }
+.act-group summary b { color: var(--ink); font-weight: 600; }
+.act-group p { overflow-wrap: anywhere; max-width: 84ch; }
+.mem-level .headline em { font-style: normal; }
