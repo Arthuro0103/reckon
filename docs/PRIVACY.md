@@ -29,12 +29,27 @@ no accounts, no API keys, and no server it talks to except itself.
   writes outside that folder.
 - Writes command **text** to the screen for you to read and run yourself — DNS changes
   and `/etc/hosts` blocklist entries included. It does not run those commands.
-- Runs a command itself in exactly one case: you clicked **Do** on a memory row, read the
-  preview, clicked Confirm and let a five-second countdown finish. The command comes from a
-  fixed table in `lib/act.js` (quit an app, stop processes, shut simulators down, quit an idle
-  Docker Desktop), never needs `sudo`, and every one is recorded on your own disk in
-  `~/.cache/reckon/actions.log`: when, what, on which process or app, and memory before and
-  after. That file stays on your machine like everything else here.
+- Runs a command, or removes a file, itself in exactly one case: you clicked **Do** on a row,
+  read the preview, clicked Confirm and let a five-second countdown finish. What runs comes from
+  a fixed table in `lib/act.js` and never needs `sudo`:
+  - memory: quit an app, stop processes, shut simulators down, quit an idle Docker Desktop;
+  - disk (macOS): clear a cache reckon's table names (with the tool's own cleaner when there is
+    one: `npm`, `brew`, `go`, `pip`, `uv`, `qlmanage`; otherwise reckon's own `safeRemove()`),
+    remove the `node_modules` of a parked repository, `git worktree remove` a merged worktree
+    (never `--force`), move iPhone backups or Mail attachment copies to the Trash, remove unused
+    Docker volumes, prune Docker build cache older than 48 hours or `docker system prune` (no
+    `-a`, no `--volumes`), delete simulators that can no longer boot, and empty the Trash (two
+    confirmations).
+
+  Every one is recorded on your own disk in `~/.cache/reckon/actions.log`: when, what, on which
+  process, app or folder, where the Trash put it, and memory or free space before and after.
+  That file stays on your machine like everything else here. Moving to the Trash and emptying it
+  go through Finder when `/usr/bin/trash` is missing, so macOS may ask once whether the app that
+  runs reckon may control Finder.
+- Never gets a button, whatever the row says: anything that needs `sudo`, DNS, `/etc/hosts`,
+  Time Machine snapshots, `purge`, an automatic `kill -9`, `--force` on a worktree, `-a` or
+  `--volumes` on a Docker prune, truncating a container log, a repository or a vault, and any
+  folder that is not on reckon's table.
 
 ## What reckon does not do
 

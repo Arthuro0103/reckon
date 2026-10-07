@@ -12,6 +12,20 @@ const pressure = require('./lib/pressure');
 // ---- phase 2: action engine (requires) -------------------------------------
 const act = require('./lib/act');
 // ---- end phase 2 requires ---------------------------------------------------
+// ---- phase 3: disk actions read the last scan back through decisions.build
+const decisions = require('./lib/decisions');
+
+// The disk rows a click may name, from the scan THIS server reads. The panel is
+// rebuilt from the scan's own measurements (a pure function, no command runs),
+// so a scan taken before the Do button existed still gets its buttons.
+function rememberDisk(c) {
+  if (!c) return null;
+  let panel = c.panel;
+  try { panel = decisions.build({ docker: c.docker, targets: c.targets || [], repos: c.repos || {} }); } catch { /* keep the scan's own */ }
+  act.remember('disk', [...((panel && panel.out) || []), ...((panel && panel.stay) || [])].filter((r) => r && r.action));
+  return panel;
+}
+// ---- end phase 3
 
 // ---- phase 1: open-only actions (separate block, to ease merging)
 const opener = require('./lib/open');
@@ -153,13 +167,25 @@ const server = http.createServer(async (req, res) => {
       const body = await readBody(req);
       return json(res, await act.run(body));
     }
+    // Phase 3, the queue: several disk rows, one confirmation, run one by one.
+    // The body is { items: [{ action, id }] } to preview and { nonce } to run.
+    if (route === '/api/act/queue/preview' && req.method === 'POST') {
+      const body = await readBody(req);
+      return json(res, await act.previewQueue(body));
+    }
+    if (route === '/api/act/queue/run' && req.method === 'POST') {
+      const body = await readBody(req);
+      return json(res, await act.runQueue(body));
+    }
     // ---- end phase 2 routes ----------------------------------------------------
 
     if (route === '/api/cache') {
       const c = scan.readCache();
       if (!c) return json(res, { hasCache: false });
       // The difference against the scan before this one, when there is one.
-      return json(res, { hasCache: true, ...c, changed: scan.changed(c, scan.readPrevious()) });
+      const changed = scan.changed(c, scan.readPrevious());
+      const panel = rememberDisk(c);   // phase 3
+      return json(res, { hasCache: true, ...c, panel: panel || c.panel, changed });
     }
 
     if (route === '/api/deep' && req.method === 'POST') {
@@ -170,7 +196,11 @@ const server = http.createServer(async (req, res) => {
       // long, so the honest fix is to show what it is doing, not to hurry it.
       progress = { step: 'starting', at: Date.now(), n: 0 };
       running = scan.deep((step) => { progress = { step, at: Date.now(), n: progress.n + 1 }; });
-      try { return json(res, await running); } finally { running = null; progress = null; }
+      try {
+        const d = await running;
+        rememberDisk(d);   // phase 3
+        return json(res, d);
+      } finally { running = null; progress = null; }
     }
 
     // A GET is something a link, a prefetch or a history restore can trigger.

@@ -388,6 +388,8 @@ function decisionCard(d) {
   if (d.warning) c.append(el('div', { class: 'alert' }, d.warning));
   const cmd = commandBlock(d.command);
   if (cmd) c.append(cmd);
+  const act = diskActButton(d);   // phase 3
+  if (act) c.append(act);
   return c;
 }
 
@@ -398,7 +400,8 @@ function stayCard(f) {
       el('div', {}, el('p', { class: 'title' }, f.title,
         el('span', { class: 'tag' }, f.verdict === 'unknown' ? 'cannot judge' : f.verdict === 'yours' ? 'yours' : 'in use'),
         f.critical ? el('span', { class: 'tag' }, 'only copy') : null))),
-    el('div', { class: 'why' }, f.why));
+    el('div', { class: 'why' }, f.why),
+    diskActButton(f));   // phase 3: only the rows the server gave an action (iOS backups, simulators)
 }
 
 /* ------------------------------------------------------------------ scan */
@@ -697,8 +700,9 @@ function disk(c) {
   root.append(el('div', { class: 'section' }, el('h2', {}, 'Targets, with the verdict spelled out')));
   const tb = el('table', { class: 'wide' },
     el('thead', {}, el('tr', {}, el('th', {}, 'Folder'), el('th', { class: 'num' }, 'Size'),
-      el('th', {}, 'Verdict'), el('th', {}, 'What you lose'))));
+      el('th', {}, 'Verdict'), el('th', {}, 'What you lose'), el('th', {}, 'Do'))));
   const body = el('tbody');
+  const rowFor = diskRowLookup(c);   // phase 3
   for (const t of targets) {
     body.append(el('tr', {},
       el('td', { class: 'name' }, el('div', {}, t.label),
@@ -706,7 +710,8 @@ function disk(c) {
         openBtn('reveal', 'show in Finder', t.path)),
       el('td', { class: 'num' }, gb(kb2gb(t.kb)), ' GB'),
       el('td', {}, el('span', { class: 'tag' }, LABEL[t.verdict])),
-      el('td', { style: 'color:var(--ink2);max-width:40ch' }, t.lose)));
+      el('td', { style: 'color:var(--ink2);max-width:40ch' }, t.lose),
+      el('td', {}, diskTableCell(rowFor, t))));
   }
   tb.append(body);
   root.append(el('div', { class: 'scrollable' }, tb));
@@ -1665,6 +1670,7 @@ async function actRun(slot, p) {
 
 function actResult(slot, p, r) {
   if (!r.ok && r.refused) { slot.append(el('p', { class: 'act-refused' }, 'Nothing was done. ', r.refused)); return; }
+  if (r.kind === 'disk') return diskResult(slot, p, r);   // phase 3
   const fmt = (s) => (s ? `pressure ${s.pressure ?? 'not read'} · ${s.availableMB ?? '?'} MB free or reclaimable · ${s.compressedMB ?? '?'} MB compressed` : 'not measured');
   const card = el('div', { class: 'act-card act-result' },
     el('h4', {}, r.dryRun ? 'Dry run: nothing was run' : r.ok ? 'Done' : 'It did not take'),
@@ -1689,6 +1695,183 @@ function actResult(slot, p, r) {
   }
   card.append(el('div', { class: 'act-actions' }, el('button', { class: 'copy',
     onclick: () => goTo(state.tab, true) }, 'measure again')));
+}
+
+/* ======================================================= DISK ACTIONS (phase 3)
+   Same engine, same rule: the page sends { action, id } and the id is the row's
+   `action.ref`, which the server finds in the scan IT read. Every row says what
+   kind of removal it is, before the click and on the preview:
+     regenerable -> removed for good; the tool that made it rebuilds it
+     trash       -> goes to the Trash, you can put it back
+     irreversible-> removed for good (the Trash itself): confirmed twice
+   Rows can also be ticked into the queue, which is previewed and confirmed once
+   with the summed total, then run one by one, stopping at the first refusal. */
+
+const REMOVAL_TAG = {
+  regenerable: 'regenerable · removed for good',
+  trash: 'goes to the Trash · you can put it back',
+  irreversible: 'cannot be undone',
+  git: 'git worktree remove · never --force',
+  docker: 'removed from Docker for good',
+};
+const QUEUE = new Map();   // ref -> { action, id, title, kb }
+
+function diskActButton(row) {
+  if (!row || !row.action || !row.action.ref || row.confidence === 'low') return null;
+  const a = row.action;
+  const slot = el('div', { class: 'act-slot' });
+  const btn = el('button', { class: 'act-do', onclick: () => diskPreview(slot, a.id, a.ref) }, 'Do: ' + a.label);
+  const tag = el('span', { class: 'tag act-removal' }, REMOVAL_TAG[a.removal] || a.removal || '');
+  let tick = null;
+  if (a.queue) {
+    const box = el('input', { type: 'checkbox', class: 'act-tick', 'aria-label': 'add to the queue' });
+    box.checked = QUEUE.has(a.ref);
+    box.addEventListener('change', () => {
+      if (box.checked) QUEUE.set(a.ref, { action: a.id, id: a.ref, title: row.title, kb: row.kb || 0 });
+      else QUEUE.delete(a.ref);
+      queueBar();
+    });
+    tick = el('label', { class: 'act-queue' }, box, ' queue');
+  }
+  return el('div', { class: 'act' }, el('div', { class: 'act-actions' }, btn, tag, tick), slot);
+}
+
+// The Disk tab lists the folders one by one; a group of folders (one browser's
+// caches) is one row on the Overview, so its button is drawn once, on its first folder.
+function diskRowLookup(c) {
+  const rows = new Map();
+  for (const r of [...((c.panel && c.panel.out) || []), ...((c.panel && c.panel.stay) || [])]) if (r.action) rows.set(r.id, r);
+  const drawn = new Set();
+  return (t) => {
+    const r = rows.get(`disk-${t.id}`) || (t.group ? rows.get(`disk-${t.group}`) : null);
+    if (!r) return { row: null };
+    if (drawn.has(r.id)) return { row: null, with: r.title };
+    drawn.add(r.id);
+    return { row: r, group: r.id !== `disk-${t.id}` };
+  };
+}
+
+function diskTableCell(rowFor, t) {
+  const { row, group, with: w } = rowFor(t);
+  if (w) return el('span', { class: 'act-note' }, `with "${w}" above`);
+  if (!row) return null;
+  return el('div', {}, group ? el('p', { class: 'act-note' }, `acts on the whole group: ${row.title}`) : null, diskActButton(row));
+}
+
+async function diskPreview(slot, action, id, nonce) {
+  slot.textContent = '';
+  slot.append(el('p', { class: 'loading' }, 'measuring it again before anything happens'));
+  let p;
+  try { p = await actPost('/api/act/preview', nonce ? { action, id, nonce } : { action, id }); }
+  catch (e) { slot.textContent = ''; slot.append(el('p', { class: 'act-refused' }, e.message)); return; }
+  slot.textContent = '';
+  if (!p.ok) { slot.append(el('p', { class: 'act-refused' }, 'Nothing will be done. ', p.refused)); return; }
+
+  const cancel = el('button', { class: 'copy', onclick: () => { slot.textContent = ''; } }, 'cancel');
+  // The Trash is emptied only after a second, separate confirmation; the server
+  // will not run the first one's nonce.
+  const next = p.stage === 1
+    ? el('button', { class: 'act-do', onclick: () => diskPreview(slot, action, id, p.nonce) }, 'Yes, continue')
+    : el('button', { class: 'act-do', onclick: () => actCountdown(slot, p) }, p.stage === 2 ? 'Empty it for good' : 'Confirm');
+  slot.append(el('div', { class: 'act-card' },
+    el('h4', {}, p.stage === 2 ? p.confirm.replace(/\?.*$/, '? Last confirmation.') : p.confirm),
+    p.removalLabel ? el('p', {}, el('span', { class: 'tag act-removal' }, p.removalLabel)) : null,
+    p.again ? el('p', { class: 'act-refused' }, p.again) : null,
+    el('p', {}, el('b', {}, 'What. '), p.what),
+    p.kb != null ? el('p', {}, el('b', {}, 'How much. '), `${gb(kb2gb(p.kb))} GB on disk, measured just now`) : null,
+    el('p', {}, el('b', {}, 'Proof, measured now. '), p.proof),
+    el('p', {}, el('b', {}, 'What you lose. '), p.lose),
+    p.warning ? el('p', { class: 'act-refused' }, p.warning) : null,
+    el('p', {}, el('b', {}, p.reversible ? 'Can be undone. ' : 'Cannot be undone. '), p.undo),
+    el('pre', { class: 'act-argv' }, p.command),
+    el('div', { class: 'act-actions' }, next, cancel)));
+}
+
+const freeLine = (s) => (s && s.freeKB != null ? `${gb(kb2gb(s.freeKB))} GB free on the disk` : 'free space not read');
+
+// Before and after, the way the Overview compares two scans: two readings of the
+// volume (a light df, not a new scan), never a claim about what caused the change.
+function diskResult(slot, p, r) {
+  const delta = r.before && r.after && r.before.freeKB != null && r.after.freeKB != null ? r.after.freeKB - r.before.freeKB : null;
+  slot.append(el('div', { class: 'act-card act-result' },
+    el('h4', {}, r.dryRun ? 'Dry run: nothing was run' : r.ok ? 'Done' : 'It did not take'),
+    el('pre', { class: 'act-argv' }, (r.ran || r.argv || []).join(' ')),
+    r.message ? el('p', { class: r.ok ? '' : 'act-refused' }, r.message) : null,
+    r.trashedTo ? el('p', {}, el('b', {}, 'In the Trash. '), short(r.trashedTo), '. Finder, Trash, select it, File > Put Back.') : null,
+    el('p', {}, el('b', {}, 'Before. '), freeLine(r.before)),
+    r.after ? el('p', {}, el('b', {}, 'After. '), freeLine(r.after),
+      delta != null ? ` (${delta >= 0 ? '+' : ''}${gb(kb2gb(delta))} GB)` : '') : null,
+    el('p', { class: 'act-note' }, 'Two readings of the volume, side by side. Free space moves for other reasons too (a download, a snapshot), and Docker gives space back to macOS only after it trims its disk.'),
+    r.logged === false ? el('p', { class: 'act-refused' }, 'The result could not be written to ~/.cache/reckon/actions.log.') : null,
+    el('div', { class: 'act-actions' }, el('button', { class: 'copy', onclick: runScan }, 'scan again to see the list change'))));
+}
+
+/* -------- the queue bar: fixed at the bottom while something is ticked */
+function queueBar() {
+  let bar = document.getElementById('act-queue-bar');   // made here, not in index.html: it exists only while something is ticked
+  if (!QUEUE.size) { if (bar) bar.remove(); return; }
+  if (!bar) { bar = el('div', { id: 'act-queue-bar', class: 'act-queue-bar' }); document.body.append(bar); }
+  bar.textContent = '';
+  const total = [...QUEUE.values()].reduce((s, q) => s + (q.kb || 0), 0);
+  const slot = el('div', { class: 'act-slot' });
+  bar.append(el('div', { class: 'act-actions' },
+    el('b', {}, `${QUEUE.size} queued`), ` · about ${gb(kb2gb(total))} GB by the scan`,
+    el('button', { class: 'act-do', onclick: () => queuePreview(slot) }, 'Review and do'),
+    el('button', { class: 'copy', onclick: () => { QUEUE.clear(); document.querySelectorAll('.act-tick').forEach((b) => { b.checked = false; }); queueBar(); } }, 'clear')),
+  slot);
+}
+
+async function queuePreview(slot) {
+  slot.textContent = '';
+  slot.append(el('p', { class: 'loading' }, 'measuring every row again before anything happens'));
+  let q;
+  try { q = await actPost('/api/act/queue/preview', { items: [...QUEUE.values()].map(({ action, id }) => ({ action, id })) }); }
+  catch (e) { slot.textContent = ''; slot.append(el('p', { class: 'act-refused' }, e.message)); return; }
+  slot.textContent = '';
+  if (!q.ok) { slot.append(el('p', { class: 'act-refused' }, 'Nothing will be done. ', q.refused)); return; }
+  const list = el('ol', { class: 'act-queue-list' }, ...q.items.map((i) => el('li', {},
+    el('b', {}, i.title), ` · ${i.kb != null ? gb(kb2gb(i.kb)) + ' GB' : 'size not read'} · `,
+    el('span', { class: 'tag act-removal' }, REMOVAL_TAG[i.removal] || i.removal),
+    el('details', {}, el('summary', {}, 'proof, what you lose, the command'),
+      el('p', {}, el('b', {}, 'Proof. '), i.proof), el('p', {}, el('b', {}, 'What you lose. '), i.lose),
+      el('pre', { class: 'act-argv' }, i.command)))));
+  const go = el('button', { class: 'act-do', onclick: () => queueCountdown(slot, q) }, `Confirm all ${q.items.length}`);
+  slot.append(el('div', { class: 'act-card' },
+    el('h4', {}, `Do ${q.items.length} thing(s), about ${gb(kb2gb(q.totalKB))} GB measured just now${q.unmeasured ? ` (+${q.unmeasured} not measurable)` : ''}?`),
+    el('p', {}, 'One by one, in this order. Each is measured again right before it runs, and the queue stops at the first one that is refused or fails.'),
+    list, el('div', { class: 'act-actions' }, go, el('button', { class: 'copy', onclick: () => { slot.textContent = ''; } }, 'cancel'))));
+}
+
+function queueCountdown(slot, q) {
+  slot.textContent = '';
+  let left = q.countdownS || 5;
+  const n = el('b', {}, String(left));
+  let timer = null;
+  const cancel = el('button', { class: 'copy', onclick: () => {
+    clearInterval(timer); slot.textContent = '';
+    slot.append(el('p', { class: 'act-refused' }, 'Cancelled. Nothing was done.'));
+  } }, 'cancel');
+  slot.append(el('div', { class: 'act-card' }, el('p', { class: 'act-count' }, 'Running in ', n, ' s. '), el('div', { class: 'act-actions' }, cancel)));
+  timer = setInterval(async () => {
+    left -= 1;
+    n.textContent = String(Math.max(0, left));
+    if (left > 0) return;
+    clearInterval(timer);
+    slot.textContent = '';
+    slot.append(el('p', { class: 'loading' }, 'running one by one, then measuring again'));
+    let r;
+    try { r = await actPost('/api/act/queue/run', { nonce: q.nonce }); }
+    catch (e) { slot.textContent = ''; slot.append(el('p', { class: 'act-refused' }, e.message)); return; }
+    slot.textContent = '';
+    if (r.refused && !r.results) { slot.append(el('p', { class: 'act-refused' }, 'Nothing was done. ', r.refused)); return; }
+    for (const one of r.results) {
+      if (one.ok) QUEUE.delete(one.id);
+      slot.append(el('p', { class: one.ok ? '' : 'act-refused' }, el('b', {}, one.title), ': ',
+        one.dryRun ? 'dry run, nothing ran' : one.ok ? 'done' : (one.refused || one.message || 'did not take')));
+    }
+    if (r.skipped) slot.append(el('p', { class: 'act-refused' }, `Stopped. ${r.skipped} more were not started.`));
+    diskResult(slot, null, { ...r, ran: [], message: null });
+  }, 1000);
 }
 
 // The Memory tab, made actionable: the kernel's own pressure level as the headline,
