@@ -164,4 +164,5 @@ const server = http.createServer(async (req, res) => {
 server.listen(PORT, '127.0.0.1', () => {
   console.log(`\n  reckon  ->  http://127.0.0.1:${PORT}`);
   console.log('  collects on demand. no polling. ctrl+c to stop.\n');
+  if (process.argv.includes('--open')) require('./lib/openpanel').openPanel(`http://127.0.0.1:${PORT}/`);
 });

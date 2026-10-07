@@ -39,6 +39,54 @@ const tile = (label, value, unit, foot) => el('div', { class: 'g-card' },
     el('div', { class: 'val' }, value, unit ? el('small', {}, unit) : null),
     foot ? el('div', { class: 'foot', html: foot }) : null));
 
+/* ------------------------------------------------------------------ small helpers */
+/* Local storage can be missing, full or blocked (private window, site data off).
+   The panel must read the same without it, so every access is guarded. */
+const store = {
+  get(k) { try { return localStorage.getItem('reckon.' + k); } catch { return null; } },
+  set(k, v) { try { localStorage.setItem('reckon.' + k, v); } catch { /* the preference is not worth an error */ } },
+};
+
+/* A long section the person can fold away. Native <details>, so it works from the
+   keyboard and with a screen reader; open or closed is remembered. */
+function fold(id, title, ...body) {
+  const d = el('details', { class: 'fold' },
+    el('summary', {}, el('h2', {}, title)), ...body.filter(Boolean));
+  d.open = store.get('fold.' + id) !== 'closed';
+  d.addEventListener('toggle', () => store.set('fold.' + id, d.open ? 'open' : 'closed'));
+  return d;
+}
+
+/* Filter a list of decisions by their kind. The count says how many are showing, the
+   buttons say which kind is chosen by pressed state and weight, never by colour alone. */
+function kindFilter(items, draw) {
+  const kinds = new Map();
+  for (const d of items) kinds.set(d.kindLabel, (kinds.get(d.kindLabel) || 0) + 1);
+  const list = el('div', { class: 'kindlist' });
+  const count = el('span', { class: 'kindcount', 'aria-live': 'polite' });
+  const bar = el('div', { class: 'kindbar', role: 'group', 'aria-label': 'Filter by kind' });
+  let chosen = null;
+  const buttons = [];
+  const paint = () => {
+    const shown = items.filter((d) => !chosen || d.kindLabel === chosen);
+    list.textContent = '';
+    for (const d of shown) list.append(draw(d));
+    count.textContent = `showing ${shown.length} of ${items.length}`;
+    for (const b of buttons) b.setAttribute('aria-pressed', String((b.dataset.kind || null) === chosen));
+  };
+  const btn = (kind, label) => {
+    const b = el('button', { type: 'button', class: 'kindbtn' }, label);
+    if (kind) b.dataset.kind = kind;
+    b.addEventListener('click', () => { chosen = kind; paint(); });
+    buttons.push(b);
+    return b;
+  };
+  bar.append(btn(null, `All (${items.length})`));
+  if (kinds.size > 1) for (const [k, n] of kinds) bar.append(btn(k, `${k} (${n})`));
+  paint();
+  return el('div', {}, kinds.size > 1 ? el('div', { class: 'kindrow' }, bar, count) : null, list);
+}
+
 /* ------------------------------------------------------------------ command */
 /* WHERE TO PASTE IT. This is not decoration.
 
@@ -182,23 +230,20 @@ function overview(c) {
   if (!nothing) root.append(grid(at('c4', chartKinds(c)), at('c8', chartColumns(c))));
   root.append(grid(at('c12', chartDocker(c))));
 
-  root.append(el('div', { class: 'section' },
-    el('h2', {}, 'What can go'),
-    el('p', {}, 'Ordered by how much it frees. Every item carries the proof of its number and what you lose if the verdict is wrong.')));
-  for (const d of p.out) root.append(decisionCard(d));
+  root.append(fold('go', `What can go (${p.out.length})`,
+    el('p', { class: 'foldnote' }, 'Ordered by how much it frees. Every item carries the proof of its number and what you lose if the verdict is wrong.'),
+    kindFilter(p.out, decisionCard)));
 
   // THE BOUNDARY. The rules change here, and the screen says so.
   root.append(el('div', { class: 'boundary' }, 'below this line, nothing goes'));
-  root.append(el('div', { class: 'section', style: 'margin-top:0' },
-    el('p', {}, 'Large things a generic tool would call garbage. Each one has a reason to stay, and the reason is checkable.')));
-  for (const f of p.stay.filter((x) => x.kb > 0 || x.critical)) root.append(stayCard(f));
   const zero = p.stay.filter((x) => !(x.kb > 0 || x.critical));
-  if (zero.length) {
-    root.append(el('details', { style: 'margin-top:10px' },
+  root.append(fold('stay', `What stays (${p.stay.length})`,
+    el('p', { class: 'foldnote' }, 'Large things a generic tool would call garbage. Each one has a reason to stay, and the reason is checkable.'),
+    ...p.stay.filter((x) => x.kb > 0 || x.critical).map(stayCard),
+    zero.length ? el('details', { style: 'margin-top:10px' },
       el('summary', { style: 'color:var(--ink3);font-size:13px;cursor:pointer' },
         `${zero.length} more that stay without taking meaningful space`),
-      el('div', { style: 'margin-top:11px' }, ...zero.map(stayCard))));
-  }
+      el('div', { style: 'margin-top:11px' }, ...zero.map(stayCard))) : null));
 }
 
 /* The chart that ties the list of decisions to the number at the top: applying
@@ -1548,7 +1593,10 @@ function goTo(tab, noHash) {
   // The tab lives in the URL: reload without losing your place, and bookmark
   // the one you actually use.
   if (!noHash && location.hash.slice(1) !== tab) location.hash = tab;
-  for (const b of document.querySelectorAll('#tabs button')) b.setAttribute('aria-selected', String(b.dataset.tab === tab));
+  for (const b of document.querySelectorAll('#tabs button')) {
+    b.setAttribute('aria-selected', String(b.dataset.tab === tab));
+    b.tabIndex = b.dataset.tab === tab ? 0 : -1;
+  }
   for (const s of document.querySelectorAll('main section')) s.hidden = s.id !== `tab-${tab}`;
   if (tab === 'memory') refreshLight().catch((e) => startupFailure('measuring memory (/api/light)', e));
   // Re-measured on every visit, deliberately. A saved reading of "how fast is
@@ -1579,6 +1627,51 @@ document.addEventListener('click', (e) => {
   if (b) goTo(b.dataset.tab);
 });
 addEventListener('hashchange', () => goTo(location.hash.slice(1), true));
+
+/* Tabs as the platform expects them: roles, arrow keys, Home and End. The markup in
+   index.html already carries the roles; this also covers any tab added later. */
+function setupTabs() {
+  for (const b of document.querySelectorAll('#tabs button[data-tab]')) {
+    const t = b.dataset.tab;
+    b.setAttribute('role', 'tab');
+    if (!b.id) b.id = `tabbtn-${t}`;
+    b.setAttribute('aria-controls', `tab-${t}`);
+    const panel = $(`#tab-${t}`);
+    if (panel) { panel.setAttribute('role', 'tabpanel'); panel.setAttribute('aria-labelledby', b.id); }
+  }
+}
+setupTabs();
+document.addEventListener('keydown', (e) => {
+  const b = e.target.closest && e.target.closest('#tabs button[role="tab"]');
+  if (!b || e.altKey || e.ctrlKey || e.metaKey) return;
+  const all = [...document.querySelectorAll('#tabs button[role="tab"]')];
+  const i = all.indexOf(b);
+  const to = { ArrowRight: (i + 1) % all.length, ArrowLeft: (i - 1 + all.length) % all.length, Home: 0, End: all.length - 1 }[e.key];
+  if (to === undefined) return;
+  e.preventDefault();
+  all[to].focus();
+  goTo(all[to].dataset.tab);
+});
+
+/* Theme: auto follows the system, light and dark pin one. Remembered, never required. */
+const THEMES = ['auto', 'light', 'dark'];
+function applyTheme(t) {
+  if (!document.documentElement) return;
+  if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t;
+  else delete document.documentElement.dataset.theme;
+  const b = $('#theme');
+  if (b) b.textContent = `theme: ${t}`;
+}
+{
+  let theme = THEMES.includes(store.get('theme')) ? store.get('theme') : 'auto';
+  applyTheme(theme);
+  const b = $('#theme');
+  if (b) b.addEventListener('click', () => {
+    theme = THEMES[(THEMES.indexOf(theme) + 1) % THEMES.length];
+    store.set('theme', theme);
+    applyTheme(theme);
+  });
+}
 
 /* A diagnostic tool that fails silently is worse than no tool: the screen stops
    at "reading…" and the person has nothing to act on and nothing to send to

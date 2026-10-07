@@ -21,7 +21,7 @@
 (function () {
 
 const NS = 'http://www.w3.org/2000/svg';
-const SUP = '#0b1a26';           // surface: the colour of the gaps and the rings
+const SUP = 'var(--bg2)';           // surface: the colour of the gaps and the rings
 
 function s(tag, attrs = {}, ...filhos) {
   const n = document.createElementNS(NS, tag);

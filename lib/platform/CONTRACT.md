@@ -169,6 +169,12 @@ other URL throws `TypeError` before anything runs: this is a way to show the com
 not a way to open a page, and a URL that arrived from somewhere else must never reach it.
 Sizes are clamped. The window is not always-on-top; a browser cannot promise that.
 
+### `openBrowser(url)` → boolean | null · **free** · OPTIONAL · **throws**
+Opens the panel in the person's default browser, for `reckon --open`. `true` when the system
+was asked, `false` when it refused, `null` on a platform without it. Only
+`http://127.0.0.1:<port>/` is accepted; any other URL throws `TypeError` before anything runs.
+Fixed argv, never a shell.
+
 ### `startPet({ cacheDir, log, onExit })` → `{ pid, stop() }` | null · **free** · OPTIONAL
 Shows the companion as a small native panel that stays above every window, full-screen apps
 included, which a browser window cannot do. On macOS it compiles one source file
