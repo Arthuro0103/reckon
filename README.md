@@ -24,11 +24,11 @@ Every item carries three things, always: **how much it frees**, **the proof of t
 
 ![How reckon works: it reads your machine, judges every item, hands you the command, and you run it](docs/img/flow.svg)
 
-### It never deletes anything on its own
+### It deletes only with one click
 
-Not a safety toggle, a design constraint. `reckon` writes only inside `~/.cache/reckon/`. It reads your machine, works out what it thinks, hands you the command, and stops. You run it.
+Not a safety toggle, a design constraint. reckon's own files go only inside `~/.cache/reckon/`. It reads your machine, works out what it thinks, and shows you the proof. Anything that changes your machine (sudo, DNS and `/etc/hosts` among it) is handed to you as a command to run yourself.
 
-One exception, for memory only, decided on 2026-10-07: **reckon never does anything you did not click, and never anything outside its table of actions.** On the Memory and Pressure tabs a row it is sure enough about (`high` or `medium`) gets a **Do** button that can quit an app gracefully (it asks to save first), stop orphaned processes, shut iOS simulators down, or quit a Docker VM with no container running. The page sends only the row's id; the server measures the target again, shows a preview with the proof and what you lose, waits for your Confirm and five seconds you can cancel, runs the fixed command with no shell and no sudo, and shows memory before and after. Each one is logged in `~/.cache/reckon/actions.log`.
+The one way reckon acts, decided on 2026-10-07: **reckon never does anything you did not click, and never anything outside its table of actions.** On the Memory and Pressure tabs a row it is sure enough about (`high` or `medium`) gets a **Do** button that can quit an app gracefully (it asks to save first), stop orphaned processes, shut iOS simulators down, or quit a Docker VM with no container running. The page sends only the row's id; the server measures the target again, shows a preview with the proof and what you lose, waits for your Confirm and five seconds you can cancel, runs the fixed command with no shell and no sudo, and shows memory before and after. Each one is logged in `~/.cache/reckon/actions.log`.
 
 The same engine acts on disk, from the last deep scan, decided by the owner the same day. What is **yours** goes to the Trash, where you can put it back; a **regenerable** cache is removed for good, and the button says which before you click. Every disk target is measured again at the click, and refused if it changed since the scan.
 
