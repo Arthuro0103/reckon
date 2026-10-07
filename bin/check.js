@@ -2048,7 +2048,7 @@ async function openOnly() {
   const banned = /^(rm|sudo|kill|killall|networksetup|osascript|sh|bash|zsh|do shell script)$/;
 
   const ids = Object.keys(o.OPENERS).sort().join(',');
-  if (ids === 'activity,backup,login,reveal,storage,terminal') ok('the open-only table has exactly the six agreed entries');
+  if (ids === 'activity,backup,login,reveal,storage,terminal,trash') ok('the open-only table has exactly the seven agreed entries (the Trash opener takes no argument)');
   else fail('the open-only table changed', ids);
 
   const bad = [];
@@ -2091,6 +2091,161 @@ async function openOnly() {
   else fail('openers are offered off macOS');
 }
 
+// ---- phase 4: history, the watcher view, the remembered verdict -----------------
+// Every fixture lives in a temporary folder that the test makes and removes. Nothing here reads
+// or writes the real ~/.cache/reckon, and nothing runs an action.
+async function phase4() {
+  const os = require('node:os');
+  const { execFileSync } = require('node:child_process');
+  const h = require('../lib/history');
+  const tri = require('../lib/triage');
+  const tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'reckon-p4-')));
+  const cache = path.join(tmp, '.cache', 'reckon');
+  fs.mkdirSync(cache, { recursive: true });
+  try {
+    // 1. actions.log: parsed, newest first, refusals kept, a corrupt line skipped.
+    const lines = [
+      { at: 1000, action: 'quit-app', id: 'g1', title: 'Opera', refused: 'quit or restarted' },
+      '{not json',
+      { at: 2000, action: 'quit-app', id: 'g2', title: 'Discord', argv: ['osascript'], dryRun: true },
+      { at: 3000, action: 'quit-app', id: 'g3', title: 'Slack', ok: true, freedKB: 2048, before: { availableMB: 100 }, after: { availableMB: 300 } },
+      { at: 4000, action: 'trash-path', id: 'd1', title: 'old', ok: true, target: path.join(tmp, 'gone') },
+    ].map((l) => (typeof l === 'string' ? l : JSON.stringify(l)));
+    fs.writeFileSync(path.join(cache, 'actions.log'), lines.join('\n') + '\n');
+    const d = h.readDone({ dir: cache });
+    const outcomes = d.rows.map((r) => r.outcome).join(',');
+    if (d.rows.length === 4 && d.rows[0].at === 4000 && outcomes === 'done,done,dry-run,refused') ok('the Done tab reads actions.log newest first, refusals included, a corrupt line skipped');
+    else fail('actions.log was not parsed as expected', outcomes);
+    if (d.rows[0].trashed && !d.rows[1].trashed && d.rows[1].freedKB === 2048 && d.rows[2].freedKB === null) ok('freed is only a number the action measured; trashed items are flagged for the Open Trash button');
+    else fail('freed or trashed is wrong');
+    if (h.readDone({ dir: path.join(tmp, 'nothing') }).rows.length === 0) ok('a missing log is an empty list, not an error');
+    else fail('a missing actions.log threw or invented rows');
+
+    // 2. "check it" measures one target again, from the log, inside home only.
+    const inHome = path.join(tmp, 'thing'); fs.mkdirSync(inHome);
+    fs.appendFileSync(path.join(cache, 'actions.log'), JSON.stringify({ at: 5000, action: 'x', target: inHome, ok: true }) + '\n'
+      + JSON.stringify({ at: 5001, action: 'x', target: '/etc', ok: true }) + '\n'
+      + JSON.stringify({ at: 5002, action: 'term', stillAlive: [999999999], ok: true }) + '\n'
+      + JSON.stringify({ at: 5003, action: 'y', ok: true }) + '\n');
+    const sizeOf = async () => 42;
+    const c1 = await h.recheck({ at: 5000, dir: cache, home: tmp, sizeOf });
+    const c2 = await h.recheck({ at: 5001, dir: cache, home: tmp, sizeOf });
+    const c3 = await h.recheck({ at: 5002, dir: cache, home: tmp, sizeOf, alive: () => false });
+    const c4 = await h.recheck({ at: 5003, dir: cache, home: tmp, sizeOf });
+    const c5 = await h.recheck({ at: 77, dir: cache, home: tmp, sizeOf });
+    fs.rmSync(inHome, { recursive: true });
+    const c6 = await h.recheck({ at: 5000, dir: cache, home: tmp, sizeOf });
+    if (c1.ok && c1.exists && c1.kb === 42 && !c2.ok && c3.kind === 'pids' && c3.stillAlive.length === 0 && c4.kind === 'none' && !c5.ok && c6.exists === false) ok('"check it" measures only the target in the log line, refuses a path outside home, and says so when there is nothing to measure');
+    else fail('"check it" is wrong', JSON.stringify([c1, c2, c3, c4, c5, c6]));
+
+    // 3. The watcher is judged by the same rule as the native pet.
+    const swift = read('native/pet.swift');
+    if (/max\(3 \* every, 90_000\)/.test(swift) && h.staleAfterMs(30000) === 90000 && h.staleAfterMs(60000) === 180000 && h.staleAfterMs(10000) === 90000) ok('the stale rule is max(3 x interval, 90 s), the one native/pet.swift uses');
+    else fail('the stale rule drifted from native/pet.swift');
+    const now = 1_000_000_000_000, alive = () => true;
+    const snap = (over) => ({ running: true, pid: 5, at: now - 10_000, intervalMs: 30000, level: 0.4, state: 'watching', active: [], ...over });
+    const j = (s, a = alive) => h.judgeWatch(s, { now, alive: a }).status;
+    const rows = [j(snap()) === 'running', j(snap({ at: now - 89_000 })) === 'running', j(snap({ at: now - 91_000 })) === 'stopped',
+      j(snap({ at: now - 120_000, intervalMs: 60000 })) === 'running', j(snap({ at: now - 181_000, intervalMs: 60000 })) === 'stopped',
+      j(snap(), () => false) === 'stopped', j(snap({ running: false })) === 'stopped', j(null) === 'never'];
+    if (rows.every(Boolean)) ok('a watcher is running only if its pid is alive and its reading is fresh; otherwise stopped or never');
+    else fail('the watcher staleness rule is wrong', rows.join(','));
+    fs.writeFileSync(path.join(cache, 'watch.json'), JSON.stringify(snap({ at: Date.now(), pid: process.pid })));
+    fs.writeFileSync(path.join(cache, 'watch.log'), JSON.stringify({ type: 'alert', kind: 'swap', at: 1, title: 'Swap holds 9 GB', cost: 'c', proof: 'p', lose: 'l', command: 'ps' }) + '\nbroken\n'
+      + JSON.stringify({ type: 'clear', kind: 'swap', at: 2, title: 'Cleared' }) + '\n');
+    const w = h.readWatch({ dir: cache });
+    if (w.running && w.events.length === 2 && w.events[1].proof === 'p' && w.events[1].lose === 'l' && w.events[0].type === 'clear' && w.startWith === 'node bin/reckon watch') ok('the Watch tab reads the state and the last events with their proof and what you lose, and offers the start command as text');
+    else fail('readWatch is wrong', JSON.stringify(w).slice(0, 200));
+    fs.writeFileSync(path.join(cache, 'watch.json'), JSON.stringify(snap({ at: Date.now() - 600_000, pid: process.pid })));
+    const ws = h.readWatch({ dir: cache });
+    if (!ws.running && ws.snapshot.level === null && ws.snapshot.state === null) ok('a stale watcher shows no level and no state');
+    else fail('a stopped watcher still shows a level');
+
+    // 4. Memory history: recorded, read back, trimmed.
+    for (let i = 0; i < 3; i++) h.recordMemory({ t: 1000 + i, swapMB: 100.4 + i, ramMB: 16384 }, { dir: cache });
+    h.recordMemory({ t: 'x', swapMB: 1 }, { dir: cache });
+    const m = h.readMemory({ dir: cache });
+    if (m.points.length === 3 && m.points[0].swapMB === 100 && m.to === 1002) ok('the memory history survives: readings are appended and read back, bad ones ignored');
+    else fail('memory history is wrong', JSON.stringify(m));
+    const big = path.join(tmp, 'big'); fs.mkdirSync(big);
+    for (let i = 0; i < 2100; i++) h.recordMemory({ t: i, swapMB: 5, ramMB: 16384 }, { dir: big });
+    const n = fs.readFileSync(path.join(big, h.MEM_FILE), 'utf8').split('\n').filter(Boolean).length;
+    if (n < 2100 && n >= 1500) ok('the memory history file is trimmed, not left to grow');
+    else fail('the memory history file was not trimmed', String(n));
+    if (/history\.recordMemory/.test(read('lib/watch.js'))) ok('the watcher records each swap reading');
+    else fail('the watcher does not record the memory history');
+
+    // 5. Verdict per repo, with the fingerprint that expires it.
+    const git = (repo, ...a) => execFileSync('git', ['-C', repo, '-c', 'user.name=t', '-c', 'user.email=t@t', '-c', 'commit.gpgsign=false', ...a], { encoding: 'utf8' });
+    const repo = path.join(tmp, 'proj'); fs.mkdirSync(repo);
+    git(repo, 'init', '-q'); fs.writeFileSync(path.join(repo, 'a.txt'), '1'); git(repo, 'add', '.'); git(repo, 'commit', '-q', '-m', 'one');
+    const scanData = { repos: { repos: [{ git: true, path: repo }] } };
+    const o = { dir: cache, home: tmp, scanData };
+    const bad1 = await tri.mark(repo, 'delete', o), bad2 = await tri.mark(repo, 'keep', { ...o, scanData: { repos: { repos: [] } } });
+    const outside = await tri.mark('/etc', 'keep', { ...o, scanData: { repos: { repos: [{ git: true, path: '/etc' }] } } });
+    if (!bad1.ok && !bad2.ok && !outside.ok) ok('a verdict outside keep/trash/maybe, a repo the scan did not measure, and a path outside home are all refused');
+    else fail('a bad verdict request was accepted', JSON.stringify([bad1, bad2, outside]));
+    if ((await tri.mark(repo, 'trash', o)).ok && !(await tri.status({ dir: cache })).verdicts[repo].expired) ok('a verdict is remembered, and holds while the repo is unchanged');
+    else fail('a fresh verdict was not remembered or already expired');
+    fs.writeFileSync(path.join(repo, 'b.txt'), 'dirty');
+    const s1 = (await tri.status({ dir: cache })).verdicts[repo];
+    if (s1.expired && /uncommitted/.test(s1.why)) ok('uncommitted changes expire the verdict, with the reason');
+    else fail('a dirty tree did not expire the verdict', JSON.stringify(s1));
+    await tri.mark(repo, 'keep', o);
+    git(repo, 'add', '.'); git(repo, 'commit', '-q', '-m', 'two');
+    const s2 = (await tri.status({ dir: cache })).verdicts[repo];
+    if (s2.expired && /committed/.test(s2.why)) ok('a new commit expires the verdict, with the reason');
+    else fail('a new commit did not expire the verdict', JSON.stringify(s2));
+    git(repo, 'remote', 'add', 'origin', 'https://example.invalid/x.git');
+    await tri.mark(repo, 'maybe', o);
+    git(repo, 'remote', 'remove', 'origin');
+    if ((await tri.status({ dir: cache })).verdicts[repo].expired) ok('gaining or losing a remote expires the verdict');
+    else fail('a changed remote did not expire the verdict');
+    const pure = [tri.expiry({ fingerprint: { commit: 'a', dirty: 0, hasRemote: true } }, { commit: 'a', dirty: 0, hasRemote: true }) === null,
+      tri.expiry({ fingerprint: { commit: 'a', dirty: 0, hasRemote: true } }, null) !== null, tri.expiry({}, { commit: 'a', dirty: 0, hasRemote: true }) !== null];
+    if (pure.every(Boolean)) ok('a verdict that cannot be compared with its repo counts as expired');
+    else fail('expiry() trusts a verdict it cannot compare');
+    fs.rmSync(repo, { recursive: true });
+    if ((await tri.status({ dir: cache })).verdicts[repo].gone) ok('a verdict whose folder is gone is reported as gone');
+    else fail('a verdict for a missing folder was not reported');
+
+    // 6. The new routes: GET and read-only; the one POST needs the token the guard already requires.
+    const srv = read('server.js');
+    const p4 = srv.slice(srv.indexOf('// ---- phase 4 routes'), srv.indexOf('// ---- end phase 4 routes'));
+    const readRoutes = ['/api/done', '/api/done/check', '/api/watchstate', '/api/memory/history', '/api/triage'];
+    const notGet = readRoutes.filter((r) => !new RegExp(`route === '${r}' && req\\.method === 'GET'`).test(p4));
+    if (!notGet.length) ok('the Done, Watch, memory-history and triage reads are GET routes');
+    else fail('a phase 4 read is not restricted to GET', notGet.join(', '));
+    const hist = read('lib/history.js').replace(/\/\/.*$/gm, '');
+    const writers = (hist.match(/writeFileSync|appendFileSync|renameSync|rmSync|unlinkSync|mkdirSync/g) || []).length;
+    const writeOutside = hist.slice(0, hist.indexOf('function recordMemory')).match(/writeFileSync|appendFileSync|renameSync|rmSync|unlinkSync|mkdirSync/);
+    if (!writeOutside && writers > 0 && !/spawn|execFile|run\(/.test(hist)) ok('lib/history.js writes only in recordMemory, inside the cache folder, and runs no command');
+    else fail('lib/history.js writes or runs something outside recordMemory');
+    if (/route === '\/api\/triage\/mark' && req\.method === 'POST'/.test(p4) && !/\/api\/triage\/mark' && req\.method === 'GET/.test(p4)) ok('marking a verdict is a POST, behind the Host, Origin and token guard');
+    else fail('marking a verdict is not a POST');
+    if (!/\b(act|opener)\./.test(p4)) ok('no phase 4 route touches the action engine or the openers');
+    else fail('a phase 4 route reaches into the action engine');
+
+    // 7. The tabs are wired: ids, sections, selectors, and the Open Trash opener.
+    const html = read('web/index.html'), app = read('web/app.js');
+    const wired = ['done', 'watch'].filter((t) => !(html.includes(`data-tab="${t}"`) && html.includes(`id="tab-${t}"`) && new RegExp(`const TABS = \\[[^\\]]*'${t}'`).test(app) && app.includes(`$('#tab-${t}')`)));
+    if (!wired.length) ok('the Done and Watch tabs have a button, a section, an entry in TABS and a drawing function');
+    else fail('a tab is not wired', wired.join(', '));
+    if (/loadDone\(\)/.test(app) && /loadWatch\(\)/.test(app) && /\/api\/done'/.test(app) && /\/api\/watchstate/.test(app) && /\/api\/memory\/history/.test(app) && /\/api\/triage'/.test(app)) ok('the page calls each new read route');
+    else fail('the page does not call a new route');
+    if (/openBtn\('trash'/.test(app) && /trash:\s+\{[^}]*target: false/.test(read('lib/open.js'))) ok('Open Trash uses a fixed opener that takes no argument');
+    else fail('Open Trash is not a fixed no-argument opener');
+    const corner = read('web/corner.html');
+    if (/id="panel"/.test(corner) && /:4127\/#pressure/.test(corner) && !/execute|\.click\(\)/.test(corner)) ok('the corner links to the panel’s Pressure tab and executes nothing');
+    else fail('the corner link is missing or does something more');
+    if (fs.existsSync(path.join(ROOT, 'docs/2026-10-07-pet-panel-link-proposal.md'))) ok('the native pet link is a proposal in docs/, not an edit to native/pet.swift');
+    else fail('the pet link proposal is missing');
+    const tdoc = read('docs/2026-09-11-triage-design.md');
+    if (!/triagem|decisoes|testar\.js/.test(tdoc)) ok('the triage design names the real English files');
+    else fail('the triage design still names Portuguese files');
+  } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
+}
+
 (async () => {
   await step('requires', async () => { await requires(); });
   await step('any platform', async () => { await loadsOnAnyPlatform(); });
@@ -2118,6 +2273,7 @@ async function openOnly() {
   await step('corner', async () => { await cornerIsSafe(); });
   await step('open only', async () => { await openOnly(); });
   await step('actions', async () => { await actions(); });
+  await step('phase 4', async () => { await phase4(); });
   await step('agent skills', async () => { await agentSkills(); });
   await step('stray draw', async () => { noStrayDraw(); });
   if (!process.env.RECKON_CHECK_CHILD) await step('other platforms', asUnsupportedPlatform);

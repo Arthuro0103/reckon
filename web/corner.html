@@ -18,6 +18,8 @@
   #copy { width: 100%; background: var(--bg3); color: var(--ink); border: 1px solid var(--line2); border-radius: 6px;
     padding: 5px 8px; font: inherit; cursor: pointer; }
   #copy:hover { background: var(--bg4); }
+  #panel { display: block; margin-top: 6px; color: var(--ink2); text-align: center; text-decoration: underline; }
+  #panel:hover { color: var(--ink); }
   #foot { margin-top: auto; color: var(--ink3); font-size: 11px; text-align: center; }
   [hidden] { display: none !important; }
 </style>
@@ -30,6 +32,7 @@
     <pre id="cmd"></pre>
     <button id="copy" type="button">copy the command</button>
   </div>
+  <a id="panel" href="#" target="_blank" rel="noopener" hidden>fix it in the panel</a>
   <div id="foot"></div>
 
 <script src="/pet.js"></script>
@@ -43,6 +46,10 @@
 
   // The page reads what `reckon watch` already measured. It measures nothing itself,
   // and it never runs the command it shows: it is text, and a button that copies it.
+  // "Fix it in the panel" only opens the panel's Pressure tab. The corner never runs anything:
+  // doing something about it is a click on the panel, behind its own preview and countdown.
+  // The address is built from where this page was loaded, so no address is written in this file.
+  $('panel').href = location.protocol + '//' + location.hostname + ':4127/#pressure';
   const POLL_MS = 3000;
   const CLOSE_AFTER_CALM_MS = 90_000;
   let calmSince = null;
@@ -56,9 +63,11 @@
       $('title').textContent = 'lost contact with reckon watch';
       $('cost').textContent = 'It may have been stopped. Nothing is being watched.';
       $('cmdbox').hidden = true;
+      $('panel').hidden = true;
       return;
     }
     if (!d.running) {
+      $('panel').hidden = true;
       lantern.set(0);
       $('title').textContent = 'reckon watch stopped';
       $('cost').textContent = '';
@@ -68,6 +77,7 @@
     }
     lantern.set(d.level);
     const h = d.headline;
+    $('panel').hidden = !h;
     $('title').textContent = h ? h.title : (d.active.length ? 'still watching a problem' : 'all quiet');
     $('cost').textContent = h ? h.cost : '';
     $('cmdbox').hidden = !(h && h.command);

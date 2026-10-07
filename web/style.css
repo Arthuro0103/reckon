@@ -397,3 +397,6 @@ button.act-do:hover { background: var(--bg3); }
 .act-group summary b { color: var(--ink); font-weight: 600; }
 .act-group p { overflow-wrap: anywhere; max-width: 84ch; }
 .mem-level .headline em { font-style: normal; }
+
+/* ---------------------------------------------------- history and verdicts (phase 4) */
+.triage { margin-top: 28px; }
