@@ -1909,7 +1909,7 @@ async function queuePreview(slot) {
     list, el('div', { class: 'act-actions' }, go, el('button', { class: 'copy', onclick: () => { slot.textContent = ''; } }, 'cancel'))));
 }
 
-function queueCountdown(slot, q) {
+function queueCountdown(slot, q, onResult) {
   slot.textContent = '';
   let left = q.countdownS || 5;
   const n = el('b', {}, String(left));
@@ -1931,6 +1931,7 @@ function queueCountdown(slot, q) {
     catch (e) { slot.textContent = ''; slot.append(el('p', { class: 'act-refused' }, e.message)); return; }
     slot.textContent = '';
     if (r.refused && !r.results) { slot.append(el('p', { class: 'act-refused' }, 'Nothing was done. ', r.refused)); return; }
+    if (onResult) return onResult(slot, r);
     for (const one of r.results) {
       if (one.ok) QUEUE.delete(one.id);
       slot.append(el('p', { class: one.ok ? '' : 'act-refused' }, el('b', {}, one.title), ': ',
@@ -1939,6 +1940,105 @@ function queueCountdown(slot, q) {
     if (r.skipped) slot.append(el('p', { class: 'act-refused' }, `Stopped. ${r.skipped} more were not started.`));
     diskResult(slot, null, { ...r, ran: [], message: null });
   }, 1000);
+}
+
+/* ============================================================ "I NEED X GB"
+   A plan, not a button. The server reads the rows that already have an action and returns an
+   ordered list: what comes back without a loss first, apps that ask to save last. Each line says
+   "up to" what that row held when it was measured. The list goes to the SAME queue as the disk
+   rows: one summed preview, one Confirm, five seconds with Cancel, one by one, each measured again
+   at the click, stopping at the first refusal and as soon as the real available memory is enough. */
+const mbShown = (mb) => (mb >= 1024 ? `${(mb / 1024).toFixed(mb >= 10240 ? 0 : 1)} GB` : `${Math.round(mb)} MB`);
+
+function planCard() {
+  const slot = el('div', { class: 'act-slot' });
+  const input = el('input', { type: 'number', min: '0.25', max: '256', step: '0.25', value: '4', class: 'plan-need', 'aria-label': 'GB of memory you need' });
+  const ask = (n) => (n > 0 ? planAsk(slot, Math.round(n * 1024)) : null);
+  const presets = [2, 4, 8].map((n) => el('button', { class: 'copy', onclick: () => { input.value = String(n); ask(n); } }, `${n} GB`));
+  return grid(at('c12', card({
+    title: 'I need X GB',
+    sub: 'Builds a plan from the rows below that already have a button. It runs nothing until you confirm.',
+    shape: el('div', {},
+      el('div', { class: 'act-actions' }, ...presets, input, el('span', { class: 'act-note' }, 'GB available'),
+        el('button', { class: 'act-do', onclick: () => ask(parseFloat(input.value)) }, 'Build a plan')),
+      slot),
+  })));
+}
+
+async function planAsk(slot, needMB) {
+  slot.textContent = '';
+  slot.append(el('p', { class: 'loading' }, 'reading the rows again and building the list'));
+  let p;
+  try { p = await actPost('/api/act/plan', { needMB }); }
+  catch (e) { slot.textContent = ''; slot.append(el('p', { class: 'act-refused' }, e.message)); return; }
+  slot.textContent = '';
+  if (!p.ok) { slot.append(el('p', { class: 'act-refused' }, p.refused)); return; }
+  if (!p.items.length) { slot.append(el('div', { class: 'act-card' }, el('p', {}, p.message))); return; }
+  const list = el('ol', { class: 'act-queue-list' }, ...p.items.map((i) => el('li', {},
+    el('b', {}, i.title), ` · up to ${mbShown(i.upToMB)} · running total ${mbShown(i.runningTotalMB)} `,
+    el('span', { class: 'tag act-removal' }, i.tierLabel),
+    i.asksToSave ? el('span', { class: 'tag act-removal' }, 'asks to save first') : null,
+    el('details', {}, el('summary', {}, 'what you lose'),
+      el('p', {}, i.lose), i.resume ? el('p', {}, el('b', {}, 'Come back with. '), el('code', {}, i.resume)) : null,
+      el('p', {}, el('b', {}, i.reversible ? 'Can be undone. ' : 'Cannot be undone. '), i.undo)))));
+  slot.append(el('div', { class: 'act-card' },
+    el('h4', {}, `${p.items.length} step(s), up to ${mbShown(p.totalMB)}, for ${mbShown(p.needMB)} available`),
+    el('p', { class: p.reaches ? '' : 'act-refused' }, p.message),
+    list,
+    el('div', { class: 'act-actions' },
+      el('button', { class: 'act-do', onclick: () => planPreview(slot, p) }, 'Review and do'),
+      el('button', { class: 'copy', onclick: () => { slot.textContent = ''; } }, 'cancel'))));
+}
+
+async function planPreview(slot, p) {
+  slot.textContent = '';
+  slot.append(el('p', { class: 'loading' }, 'measuring every row again before anything happens'));
+  let q;
+  try { q = await actPost('/api/act/queue/preview', { items: p.items.map(({ action, id }) => ({ action, id })), needMB: p.needMB }); }
+  catch (e) { slot.textContent = ''; slot.append(el('p', { class: 'act-refused' }, e.message)); return; }
+  slot.textContent = '';
+  if (!q.ok) { slot.append(el('p', { class: 'act-refused' }, 'Nothing will be done. ', q.refused)); return; }
+  const list = el('ol', { class: 'act-queue-list' }, ...q.items.map((i) => el('li', {},
+    el('b', {}, i.title), ` · ${i.mb != null ? 'up to ' + mbShown(i.mb) : 'size not read'} `,
+    i.asksToSave ? el('span', { class: 'tag act-removal' }, 'asks to save first') : null,
+    el('details', {}, el('summary', {}, 'proof, what you lose, the command'),
+      el('p', {}, el('b', {}, 'Proof. '), i.proof), el('p', {}, el('b', {}, 'What you lose. '), i.lose),
+      el('pre', { class: 'act-argv' }, i.command)))));
+  slot.append(el('div', { class: 'act-card' },
+    el('h4', {}, `Do ${q.items.length} thing(s), up to ${mbShown(Math.floor(q.totalKB / 1024))} measured just now, until ${mbShown(q.needMB)} is available?`),
+    el('p', {}, 'One by one, in this order. Each is measured again right before it runs. The available memory is read after every step and the rest are skipped as soon as it is enough. It stops at the first one that is refused or fails.'),
+    list,
+    el('div', { class: 'act-actions' },
+      el('button', { class: 'act-do', onclick: () => queueCountdown(slot, q, planResult) }, `Confirm all ${q.items.length}`),
+      el('button', { class: 'copy', onclick: () => { slot.textContent = ''; } }, 'cancel'))));
+}
+
+function planResult(slot, r) {
+  const pl = r.plan || {};
+  const avail = (v) => (v == null ? 'not read' : mbShown(v));
+  slot.append(el('div', { class: 'act-card act-result' },
+    el('h4', {}, r.dryRun ? 'Dry run: nothing was run' : pl.metNeed ? 'Enough is available now' : r.ok ? 'Done, and it is still short of the need' : 'Stopped'),
+    ...r.results.map((one) => el('p', { class: one.ok ? '' : 'act-refused' }, el('b', {}, one.title), ': ',
+      one.dryRun ? 'dry run, nothing ran' : one.ok ? `done${one.freedKB ? `, it held about ${mbShown(Math.round(one.freedKB / 1024))}` : ''}` : (one.refused || one.message || 'did not take'))),
+    ...(r.skippedItems || []).map((s) => el('p', { class: 'act-note' }, el('b', {}, s.title), `: skipped (${s.why})`)),
+    el('p', {}, el('b', {}, 'Available before. '), avail(pl.availableBefore)),
+    el('p', {}, el('b', {}, 'Available after. '), avail(pl.availableAfter), ` · you asked for ${mbShown(pl.needMB)}`),
+    el('p', { class: 'act-note' }, 'Two readings of the same number (free plus inactive and purgeable pages, as lib/headroom.js counts them), side by side. Memory moves for other reasons too, so this is not a claim about what caused the difference.'),
+    el('div', { class: 'act-actions' }, el('button', { class: 'copy', onclick: () => goTo(state.tab, true) }, 'measure again'))));
+}
+
+// Docker Desktop's memory limit, as text. No button: the setting lives in Docker Desktop's own window.
+function dockerCard(dk) {
+  const row = (k, v) => el('p', {}, el('b', {}, k + ' '), v);
+  return grid(at('c12', card({
+    title: dk.title, sub: `${dk.vmMB} MB held by the VM right now · text only, no button`,
+    shape: el('div', {},
+      row('Limit.', dk.limitMiB != null ? `${mbShown(dk.limitMiB)}${dk.limitPct != null ? `, ${dk.limitPct}% of this machine's ${mbShown(dk.totalMiB)}` : ''}` : 'not found in Docker Desktop\'s settings file'),
+      row('Containers running.', dk.containers != null ? String(dk.containers) : dk.asleep ? 'not asked (Docker is asleep, and asking would wake it)' : 'Docker did not answer'),
+      el('p', {}, dk.advice),
+      row('Change it at.', dk.changeAt),
+      el('p', { class: 'act-note' }, dk.file ? `Read from ${dk.file} (read-only).` : 'Docker Desktop\'s settings file was not found (read-only lookup in your home folder).')),
+  })));
 }
 
 // The Memory tab, made actionable: the kernel's own pressure level as the headline,
@@ -1959,6 +2059,7 @@ function memoryActable(root, d) {
       ? `${PRESSURE_WORDS[level.label] || ''} This is the kernel's own verdict (kern.memorystatus_vm_pressure_level = ${level.level}), the number macOS itself acts on.`
       : 'This system did not say how pressed its memory is, so no verdict is claimed. The groups below are still measured.')));
 
+  root.append(planCard());
   const rows = (m.rows || []);
   root.append(el('div', { class: 'section' }, el('h2', {}, 'What you can give back')));
   for (const r of rows) {
@@ -1975,17 +2076,20 @@ function memoryActable(root, d) {
   const list = el('div', { class: 'act-groups' });
   for (const g of (m.groups || []).slice(0, 12)) {
     if (g.proof == null) continue;
-    const procs = (g.procs || []).map((p) => [p.pid, Math.round(p.rssKB / 1024), (p.cpu ?? 0).toFixed(1), short(p.comm)]);
+    // Helpers are shown under their app, as one row. Only the app row has a button: no helper has one.
+    const procs = (g.procs || []).map((p) => [p.pid, p.helper ? 'helper' : 'app', Math.round(p.rssKB / 1024), (p.cpu ?? 0).toFixed(1), short(p.comm)]);
     list.append(el('details', { class: 'act-group' },
-      el('summary', {}, el('b', {}, g.name), ` · ${gb(kb2gb(g.rssKB))} GB · ${g.n} process${g.n > 1 ? 'es' : ''}`,
+      el('summary', {}, el('b', {}, g.name), `: ${g.n} process${g.n > 1 ? 'es' : ''}, ${Math.round(g.rssKB / 1024)} MB`,
+        g.helpers ? ` (${g.helpers} helper${g.helpers > 1 ? 's' : ''})` : '',
         g.action ? ` · can ${g.action.label.toLowerCase()}` : ''),
       el('p', {}, el('b', {}, 'Proof. '), g.proof),
       el('p', {}, el('b', {}, 'What you lose if this is wrong. '), g.lose),
-      procs.length ? tableOf(['pid', 'MB', 'cpu %', 'executable'], procs) : null,
+      procs.length ? tableOf(['pid', 'role', 'MB', 'cpu %', 'executable'], procs) : null,
       g.command ? commandBlock(g.command, g.action ? 'or copy it and run it yourself' : 'shown for reference; there is no button for this group') : null,
       actButton(g)));
   }
   root.append(list);
+  if (m.docker) root.append(dockerCard(m.docker));
   root.append(freeRamCard());
 }
 

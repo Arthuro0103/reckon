@@ -55,6 +55,11 @@ no accounts, no API keys, and no server it talks to except itself.
   That file stays on your machine like everything else here. Moving to the Trash and emptying it
   go through Finder when `/usr/bin/trash` is missing, so macOS may ask once whether the app that
   runs reckon may control Finder.
+- For the Docker advice card on the Memory tab, and only while Docker Desktop's VM is running, reads
+  one more file of yours, read-only: Docker Desktop's own settings, `~/Library/Group Containers/group.com.docker/settings-store.json`
+  (or, when that has no limit, `settings.json` in the same folder). It takes one value from it, the VM's
+  memory limit (`memoryMiB`, in either case), shows it, and keeps nothing: the rest of the file is not read
+  into any reading, and nothing is written back. A missing or unreadable file is shown as such.
 - To judge the AI-tool rows on the Pressure and Memory tabs, reads, on your machine only:
   - **When a terminal was last used**: the access and modification times of its device file in
     `/dev` (`ttys003`), with `stat`. Nothing is read from the terminal itself.

@@ -27,6 +27,19 @@ function rememberDisk(c) {
 }
 // ---- end phase 3
 
+// The plan reads the memory rows and the AI-tool rows as they are NOW, so it does not depend on
+// which tab was open last. Two readings, no probe, nothing written but the ids this server may name.
+async function refreshForPlan() {
+  try {
+    const d = await scan.light();
+    act.remember('memory', [...(d.memory.groups || []), ...(d.memory.rows || [])]);
+  } catch { /* the plan then uses what it last read */ }
+  try {
+    const [procs, ports] = await Promise.all([require('./lib/platform').processList(), require('./lib/platform').listeningPorts()]);
+    act.remember('pressure', await pressure.actionRows(procs, ports));
+  } catch { /* same */ }
+}
+
 // ---- phase 4: history, watcher view, remembered verdicts (requires)
 const history = require('./lib/history');
 const triage = require('./lib/triage');
@@ -177,7 +190,15 @@ const server = http.createServer(async (req, res) => {
       const body = await readBody(req);
       return json(res, await act.run(body));
     }
-    // Phase 3, the queue: several disk rows, one confirmation, run one by one.
+    // "I need X GB": reads the rows that already have an action and builds an ordered list. POST
+    // like every other route under /api/act/, so the Host, Origin and token guards above apply. It
+    // runs NOTHING: the list goes to the queue below, which previews, confirms and re-measures.
+    if (route === '/api/act/plan' && req.method === 'POST') {
+      const body = await readBody(req);
+      if (Number(body.needMB) >= 256) await refreshForPlan();   // an ask the engine will refuse reads nothing
+      return json(res, await act.plan(body));
+    }
+    // Phase 3, the queue: several rows of one kind (disk, or the memory plan), one confirmation, run one by one.
     // The body is { items: [{ action, id }] } to preview and { nonce } to run.
     if (route === '/api/act/queue/preview' && req.method === 'POST') {
       const body = await readBody(req);
