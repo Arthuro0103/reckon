@@ -15,7 +15,11 @@ no accounts, no API keys, and no server it talks to except itself.
 - Reads disk usage, memory, running processes, Docker's disk image, your Git
   repositories, and your DNS configuration — all on the machine it runs on.
 - Serves a web page from `127.0.0.1` (loopback only — nothing outside the machine can
-  even reach it; see the README for why that means no login is needed either).
+  even reach it; see the README for why that means no login is needed either). Because
+  another page open in the same browser can still make that browser talk to `127.0.0.1`,
+  the server also answers only when the `Host` header is `127.0.0.1:<port>` or
+  `localhost:<port>`, refuses a `POST` whose `Origin` is any other site, and requires on
+  every `POST` a random token it draws at each launch and writes only into the page it serves.
 - Caches what it measured in `~/.cache/reckon/` so it doesn't re-measure on every click.
 - If you run `reckon watch --pet` on a Mac, compiles one Swift file (`native/pet.swift`) on your own
   machine and runs it as a child of the watcher. The pet reads `~/.cache/reckon/watch.json`, draws a
@@ -49,12 +53,13 @@ That is the rule, and it is narrower and more checkable than "no outbound reques
 The Internet tab includes a speed test you start by clicking a button. It does not run on
 page load, on a timer, or in the background — only on that explicit click.
 
-When you click it, your browser makes network requests directly to Apple's public network
-measurement endpoints (the same infrastructure macOS itself uses for its own Wi-Fi speed
-checks). These requests carry your IP address, as any network request must, and exchange
-data sized to measure throughput and latency. reckon's server is not in that path — it's
-your browser talking to Apple, not reckon relaying anything — and the result reckon shows
-you is the number that comes back, nothing more.
+When you click it, the page sends `POST /api/network/speed` to reckon's own loopback
+server, and that server runs `networkQuality`, the measurement tool built into macOS. It is
+`networkQuality` that talks to Apple's public measurement endpoints (the same infrastructure
+macOS itself uses for its own Wi-Fi speed checks), not your browser and not any code of
+reckon's. Those requests carry your IP address, as any network request must, and exchange
+data sized to measure throughput and latency. The result reckon shows you is the number
+`networkQuality` reports, nothing more, and it is not sent anywhere else.
 
 This is the only feature in the project that contacts a server outside your machine, it
 is off by default, and clicking it is the only thing that turns it on. If you never open
@@ -63,12 +68,13 @@ the Internet tab and click the speed test, this exception never applies to you.
 ## How to verify any of this yourself
 
 - `package.json` — dependencies field is empty.
-- The server binds to `127.0.0.1`, not `0.0.0.0` — check `server.js`.
+- The server binds to `127.0.0.1`, not `0.0.0.0`, and checks Host, Origin and its
+  per-launch token — check `server.js`; `node bin/check.js` asks it over a real socket.
 - Search the codebase for any hostname other than a loopback address or the speed-test
   endpoint; there isn't one.
 - Nothing in `lib/` makes an HTTP request. The only network code is the DNS resolver probe
   (which queries the resolvers already configured on your machine, not a third party) and
-  the speed test described above.
+  the speed test described above, which `lib/platform` runs as the `networkQuality` command.
 
 If a future version of this document stops matching the code, that's a bug in the
 document — file it as one.

@@ -40,9 +40,10 @@ open a URL, reach the network, delete a file). A second native file needs its ow
 
 No API keys, no telemetry, no LLM of any kind. The one standing exception is the
 user-initiated speed test on the Internet tab, and that exception has two hard
-conditions that must never be loosened: it runs from the **browser**, not the server, and
-only on an **explicit click** — never on page load, a timer, or any code path a user
-didn't just trigger. A pull request that adds a second network call, or that makes the
+conditions that must never be loosened: it runs **only through macOS's own
+`networkQuality`**, which the server starts on `POST /api/network/speed` (no HTTP client of
+reckon's own), and only on an **explicit click** — never on page load, a timer, or any code
+path a user didn't just trigger. A pull request that adds a second network call, or that makes the
 speed test start itself, breaks this constraint even if the call looks harmless.
 
 ## 4. Everything user-facing is in English
@@ -108,7 +109,9 @@ in one shared global scope without colliding; every `$('#id')` used in the front
 exists in `index.html`; no accented identifier sits in a contract position; every CSS
 class and variable used is defined in `web/tokens.css` or `web/style.css`; the DNS
 command pair never emits `null`; the hosts blocklist domain sieve behaves; the server is
-loopback-only; and no hardcoded home directory appears anywhere in `lib/`, `server.js`, or
+loopback-only, answers only its own `Host` (`127.0.0.1:<port>` or `localhost:<port>`),
+refuses a `POST` from a foreign `Origin` or without the per-launch `x-reckon-token` that it
+writes into the page it serves, and starts the deep scan only on `POST`; and no hardcoded home directory appears anywhere in `lib/`, `server.js`, or
 `web/app.js`. Run it before opening a pull request, not after someone else finds the
 failure in review.
 

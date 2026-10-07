@@ -16,9 +16,13 @@ const short = (p) => String(p).replace(/^\/Users\/[^/]+/, '~').replace(/^\/home\
 // A failed call carries the server's own message forward. `GET /api/light 500`
 // tells a person nothing they can act on or send to anybody; the reason the
 // scan threw is the whole content of the failure.
-const get = async (u) => {
+// The server writes a fresh token into this page on every launch and refuses
+// any POST that does not carry it back.
+const TOKEN = (document.querySelector('meta[name="reckon-token"]') || {}).content || '';
+const authed = (headers = {}) => ({ ...headers, 'x-reckon-token': TOKEN });
+const get = async (u, opts) => {
   let r;
-  try { r = await fetch(u); }
+  try { r = await fetch(u, opts); }
   catch (e) { throw new Error(`${u} — the panel's own server did not answer (${e.message}). It may have stopped.`); }
   if (!r.ok && r.status !== 409) {
     let detail = '';
@@ -433,7 +437,7 @@ async function runScan() {
   })();
 
   try {
-    const d = await get('/api/deep');
+    const d = await get('/api/deep', { method: 'POST', headers: authed() });
 
     // A scan was ALREADY running — started from another tab, from the command
     // line, or by a second click. The old behaviour put the previous screen
@@ -1151,7 +1155,7 @@ function radioSection(d) {
 
 async function postNetwork(route) {
   try {
-    const res = await fetch(route, { method: 'POST' });
+    const res = await fetch(route, { method: 'POST', headers: authed() });
     const out = await res.json();
     if (out && out.alreadyRunning) return null;
     return out;
@@ -1402,7 +1406,7 @@ function blocklistSection(b) {
 
 async function sendBlocklist(route, body, after) {
   try {
-    const r = await fetch(route, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+    const r = await fetch(route, { method: 'POST', headers: authed({ 'content-type': 'application/json' }), body: JSON.stringify(body) });
     const d = await r.json();
     if (!r.ok) { if (after) after(d); return; }
     state.blocklist = d;

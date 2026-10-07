@@ -1236,6 +1236,120 @@ function watchDecides() {
 
 // The corner window shows text that came from the machine — process names end up in an
 // alert's title — so what it may do with that text is tested, not assumed.
+/* THE DASHBOARD'S OWN SERVER, ASKED OVER A REAL SOCKET.
+ *
+ * Loopback-only stops other machines. It does not stop another page open in the
+ * same browser: that page can make the browser POST to 127.0.0.1, or point its
+ * own name at 127.0.0.1 and read the answers. Three guards close that, and each
+ * one is asked here the way an attacker would ask.
+ *
+ * The server runs on a free port with HOME pointed at a temporary folder, so
+ * anything it writes lands there. If HOME cannot be redirected on this system,
+ * no POST is sent at all: a broken guard would then write into the person's
+ * real cache. Only routes that cannot cost anything are ever asked: the speed
+ * test and the deep scan are never sent a POST from here.
+ */
+async function serverGuards() {
+  const os = require('node:os');
+  const net = require('node:net');
+  const http = require('node:http');
+  const { spawn, spawnSync } = require('node:child_process');
+
+  const app = read('web/app.js');
+  const posts = (app.match(/method: 'POST'/g) || []).length;
+  const signed = (app.match(/method: 'POST', headers: authed\(/g) || []).length;
+  if (posts && posts === signed) ok(`every POST in web/app.js carries the token (${posts})`);
+  else fail('a POST in web/app.js does not send x-reckon-token', `${signed} of ${posts}`);
+  if (/<meta name="reckon-token" content="">/.test(read('web/index.html'))) ok('index.html has the empty token slot the server fills');
+  else fail('index.html has no reckon-token meta for the server to fill');
+
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'reckon-server-check-'));
+  const seen = spawnSync(process.execPath, ['-e', "process.stdout.write(require('os').homedir())"],
+    { encoding: 'utf8', env: { ...process.env, HOME: home, USERPROFILE: home }, timeout: 10000 });
+  const redirected = fs.realpathSync(String(seen.stdout || '.')) === fs.realpathSync(home);
+
+  const port = await new Promise((resolve, reject) => {
+    const probe = net.createServer().once('error', reject);
+    probe.listen(0, '127.0.0.1', () => { const p = probe.address().port; probe.close(() => resolve(p)); });
+  });
+  const child = spawn(process.execPath, [path.join(ROOT, 'server.js')], {
+    env: { ...process.env, PORT: String(port), HOME: home, USERPROFILE: home }, stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  const ask = (method, route, headers = {}, body) => new Promise((resolve) => {
+    const req = http.request({ host: '127.0.0.1', port, method, path: route,
+      headers: { host: `127.0.0.1:${port}`, ...headers } }, (res) => {
+      let text = '';
+      res.on('data', (c) => { text += c; });
+      res.on('end', () => resolve({ status: res.statusCode, text }));
+    });
+    req.on('error', (e) => resolve({ status: 0, text: e.message }));
+    req.setTimeout(20000, () => req.destroy(new Error('timeout')));
+    if (body) req.write(body);
+    req.end();
+  });
+
+  try {
+    const up = await new Promise((resolve) => {
+      const t = setTimeout(() => resolve(false), 15000);
+      child.stdout.on('data', (c) => { if (/127\.0\.0\.1/.test(String(c))) { clearTimeout(t); resolve(true); } });
+      child.on('exit', () => { clearTimeout(t); resolve(false); });
+    });
+    if (!up) return fail('the server did not start on a free port for the guard checks');
+
+    const rebound = await ask('GET', '/api/self', { host: `evil.example:${port}` });
+    if (rebound.status === 403) ok('a request under another Host name is refused (403)');
+    else fail('a rebound Host name was answered', String(rebound.status));
+    const otherPort = await ask('GET', '/', { host: `127.0.0.1:${port + 1}` });
+    if (otherPort.status === 403) ok('the right address with the wrong port is refused too');
+    else fail('a Host with the wrong port was answered', String(otherPort.status));
+
+    const page = await ask('GET', '/');
+    const token = (page.text.match(/<meta name="reckon-token" content="([0-9a-f]{64})">/) || [])[1];
+    if (page.status === 200 && token) ok('the page is served with a fresh 64-hex token written in');
+    else fail('the served page carries no token', String(page.status));
+    const again = await ask('GET', '/', { host: `localhost:${port}` });
+    if (again.status === 200 && token && again.text.includes(token)) ok('localhost:<port> is answered, with the same token for this launch');
+    else fail('localhost:<port> was refused or got a different token', String(again.status));
+
+    const deep = await ask('GET', '/api/deep');
+    if (deep.status === 405 && /POST/.test(deep.text)) ok('GET /api/deep is refused with 405 and says to use POST');
+    else fail('GET /api/deep still starts a scan', String(deep.status));
+
+    const snippet = path.join(home, '.cache', 'reckon', 'hosts-block.txt');
+    if (redirected) {
+      fs.mkdirSync(path.dirname(snippet), { recursive: true });
+      fs.writeFileSync(snippet, 'sentinel\n');
+      const before = fs.statSync(snippet).mtimeMs;
+      await ask('GET', '/api/blocklist');
+      if (fs.readFileSync(snippet, 'utf8') === 'sentinel\n' && fs.statSync(snippet).mtimeMs === before) ok('GET /api/blocklist leaves hosts-block.txt untouched');
+      else fail('GET /api/blocklist rewrote hosts-block.txt');
+
+      const body = JSON.stringify({ domain: 'example.com' });
+      const json = { 'content-type': 'application/json' };
+      const bare = await ask('POST', '/api/blocklist/remove', json, body);
+      if (bare.status === 403) ok('a POST without the token is refused (403)');
+      else fail('a POST without the token was answered', String(bare.status));
+      const wrong = await ask('POST', '/api/blocklist/remove', { ...json, 'x-reckon-token': '0'.repeat(64) }, body);
+      if (wrong.status === 403) ok('a POST with a wrong token of the right length is refused (403)');
+      else fail('a wrong token was accepted', String(wrong.status));
+      const foreign = await ask('POST', '/api/blocklist/remove', { ...json, 'x-reckon-token': token, origin: 'http://evil.example' }, body);
+      if (foreign.status === 403) ok('a POST from another Origin is refused even with the token (403)');
+      else fail('a POST from a foreign Origin was answered', String(foreign.status));
+      if (fs.readFileSync(snippet, 'utf8') === 'sentinel\n') ok('none of the refused POSTs wrote anything');
+      else fail('a refused POST still wrote the snippet');
+
+      const good = await ask('POST', '/api/blocklist/remove', { ...json, 'x-reckon-token': token, origin: `http://127.0.0.1:${port}` }, body);
+      if (good.status !== 403 && fs.readFileSync(snippet, 'utf8').includes('>>> reckon')) ok('the panel\'s own POST, with token and Origin, gets through and rewrites the snippet');
+      else fail('the panel\'s own POST was refused or did not write the snippet', String(good.status));
+    } else {
+      ok('HOME could not be redirected here, so no POST was sent (a broken guard would have written to the real cache)');
+    }
+  } finally {
+    child.kill();
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+}
+
 async function cornerIsSafe() {
   const w = require(path.join(ROOT, 'lib/watch.js'));
   const html = read('web/corner.html');
@@ -1578,6 +1692,7 @@ async function step(name, fn) {
   await step('internet', async () => { await networkPromises(); });
   await step('packaging', async () => { await packagedBundle(); });
   await step('safety', async () => { await safety(); await noHardcodedPaths(); });
+  await step('server guards', async () => { await serverGuards(); });
   await step('companion', async () => { await petStatusIsShape(); });
   await step('native pet', async () => { await nativePet(); });
   await step('watch', async () => { await watchDecides(); });

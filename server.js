@@ -2,6 +2,7 @@
 const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
+const crypto = require('node:crypto');
 const scan = require('./lib/scan');
 const self = require('./lib/self');
 const dns = require('./lib/dns');
@@ -11,6 +12,26 @@ const pressure = require('./lib/pressure');
 
 const PORT = process.env.PORT || 4127;
 const WEB = path.join(__dirname, 'web');
+
+// The three guards in front of every request. Loopback alone is not enough: any
+// page open in the same browser can make that browser talk to 127.0.0.1.
+//  - Host: a site that points its own name at 127.0.0.1 (DNS rebinding) still
+//    sends its own name in Host. Only ours is answered, as the corner does.
+//  - Origin: a POST from another site carries that site's Origin. A browser
+//    always sends it on a cross-site POST, so a foreign one is refused.
+//  - Token: drawn fresh on every launch, written into the page this server
+//    serves, and required on every request that changes state. Another site
+//    cannot read our page, so it cannot learn the token.
+const HOSTS = new Set([`127.0.0.1:${PORT}`, `localhost:${PORT}`]);
+const ORIGINS = new Set([`http://127.0.0.1:${PORT}`, `http://localhost:${PORT}`]);
+const TOKEN = crypto.randomBytes(32).toString('hex');
+const TOKEN_META = '<meta name="reckon-token" content="">';
+
+function tokenOk(req) {
+  const given = Buffer.from(String(req.headers['x-reckon-token'] || ''));
+  const want = Buffer.from(TOKEN);
+  return given.length === want.length && crypto.timingSafeEqual(given, want);
+}
 
 // A short in-memory history, capped. No database, no file, no polling: a point
 // is recorded when YOU open the Memory tab.
@@ -45,6 +66,15 @@ function readBody(req) {
   });
 }
 
+// The page itself, with this launch's token written into it.
+function index(res) {
+  fs.readFile(path.join(WEB, 'index.html'), 'utf8', (err, text) => {
+    if (err) { res.writeHead(404); return res.end('not found: index.html'); }
+    res.writeHead(200, { 'content-type': TYPES['.html'], 'cache-control': 'no-store' });
+    res.end(text.replace(TOKEN_META, `<meta name="reckon-token" content="${TOKEN}">`));
+  });
+}
+
 function static_(res, file) {
   const target = path.join(WEB, file);
   if (!target.startsWith(WEB)) { res.writeHead(403); return res.end('no'); }
@@ -61,11 +91,18 @@ const server = http.createServer(async (req, res) => {
   const ip = req.socket.remoteAddress || '';
   if (!ip.includes('127.0.0.1') && !ip.includes('::1')) { res.writeHead(403); return res.end('local only'); }
 
+  if (!HOSTS.has(req.headers.host)) { res.writeHead(403); return res.end('wrong host'); }
+  if (req.method === 'POST') {
+    const origin = req.headers.origin;
+    if (origin !== undefined && !ORIGINS.has(origin)) { res.writeHead(403); return res.end('wrong origin'); }
+    if (!tokenOk(req)) { res.writeHead(403); return res.end('missing or wrong token'); }
+  }
+
   const url = new URL(req.url, 'http://localhost');
   const route = url.pathname;
 
   try {
-    if (route === '/') return static_(res, 'index.html');
+    if (route === '/') return index(res);
     if (/^\/(app|charts|pet)\.js$/.test(route) || /^\/(style|tokens|pet)\.css$/.test(route)) return static_(res, route.slice(1));
     // The companion's preview: the drawing, reviewed up close before it is wired to anything.
     if (route === '/pet') return static_(res, 'pet.html');
@@ -93,7 +130,7 @@ const server = http.createServer(async (req, res) => {
       return json(res, { hasCache: true, ...c, changed: scan.changed(c, scan.readPrevious()) });
     }
 
-    if (route === '/api/deep') {
+    if (route === '/api/deep' && req.method === 'POST') {
       if (running) return json(res, { alreadyRunning: true }, 409);
       // The steps the scan is already computing, kept where the screen can ask
       // for them. Two minutes of a frozen page is the moment a person decides
@@ -102,6 +139,13 @@ const server = http.createServer(async (req, res) => {
       progress = { step: 'starting', at: Date.now(), n: 0 };
       running = scan.deep((step) => { progress = { step, at: Date.now(), n: progress.n + 1 }; });
       try { return json(res, await running); } finally { running = null; progress = null; }
+    }
+
+    // A GET is something a link, a prefetch or a history restore can trigger.
+    // Two minutes of disk reading is not something to start by accident.
+    if (route === '/api/deep') {
+      res.writeHead(405, { allow: 'POST', 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
+      return res.end(JSON.stringify({ error: 'the deep scan starts with POST /api/deep (the Scan button), not GET' }));
     }
 
     // Only meaningful while a scan the user started is running, and it stops
