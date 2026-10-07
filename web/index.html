@@ -26,6 +26,8 @@ try { var t = localStorage.getItem('reckon.theme'); if (t === 'light' || t === '
     <button role="tab" id="tabbtn-disk" aria-controls="tab-disk" data-tab="disk" aria-selected="false" tabindex="-1">Disk</button>
     <button role="tab" id="tabbtn-internet" aria-controls="tab-internet" data-tab="internet" aria-selected="false" tabindex="-1">Internet<span class="count" id="count-internet"></span></button>
     <button role="tab" id="tabbtn-checks" aria-controls="tab-checks" data-tab="checks" aria-selected="false" tabindex="-1">Checks<span class="count" id="count-checks"></span></button>
+    <button role="tab" id="tabbtn-done" aria-controls="tab-done" data-tab="done" aria-selected="false" tabindex="-1">Done</button>
+    <button role="tab" id="tabbtn-watch" aria-controls="tab-watch" data-tab="watch" aria-selected="false" tabindex="-1">Watch</button>
     <span class="spacer"></span>
     <button role="tab" id="tabbtn-dns" aria-controls="tab-dns" data-tab="dns" aria-selected="false" tabindex="-1" class="risky">DNS</button>
   </nav>
@@ -38,6 +40,8 @@ try { var t = localStorage.getItem('reckon.theme'); if (t === 'light' || t === '
   <section id="tab-disk" role="tabpanel" aria-labelledby="tabbtn-disk" hidden></section>
   <section id="tab-internet" role="tabpanel" aria-labelledby="tabbtn-internet" hidden></section>
   <section id="tab-checks" role="tabpanel" aria-labelledby="tabbtn-checks" hidden></section>
+  <section id="tab-done" role="tabpanel" aria-labelledby="tabbtn-done" hidden></section>
+  <section id="tab-watch" role="tabpanel" aria-labelledby="tabbtn-watch" hidden></section>
   <section id="tab-dns" role="tabpanel" aria-labelledby="tabbtn-dns" hidden></section>
 </main>
 

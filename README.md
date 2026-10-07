@@ -105,6 +105,8 @@ The skills live in the repo, not in the npm package, so they work from a clone, 
 | **Disk** | where the space went, folder by folder, with a verdict: `disposable` · `yours` · `cannot judge` |
 | **Internet** | which link is carrying traffic, the round trip to your router and to the resolvers you already use, and — behind their own buttons, with the cost stated first — throughput and the Wi-Fi radio |
 | **Checks** | what is broken and has a fix |
+| **Done** | everything logged in `~/.cache/reckon/actions.log`: what was done or refused, memory before and after, what it really freed, an **Open Trash** button for anything moved there, and a **check it** button that measures only that target again. It only reads the log |
+| **Watch** | whether `reckon watch` is running (pid alive and a fresh reading; stopped after the longer of 3 intervals or 90 s), its level, the last events with their proof and what you lose, and the command to start it. The panel never starts it |
 | **DNS** | two halves: a blocklist you build, and the resolver your machine asks |
 
 ![The Disk tab: a treemap of every cache this tool can name, colour is the verdict](docs/img/disk.png)

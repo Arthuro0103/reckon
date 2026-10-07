@@ -430,3 +430,6 @@ footer .footbtn {
 }
 footer .footbtn:hover { border-color: var(--cyan); }
 .kindlist { min-width: 0; }
+
+/* ---------------------------------------------------- history and verdicts (phase 4) */
+.triage { margin-top: 28px; }

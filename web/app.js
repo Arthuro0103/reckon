@@ -32,8 +32,8 @@ const get = async (u, opts) => {
   return r.json();
 };
 
-const state = { openers: [], cache: null, light: null, dns: null, blocklist: null, network: null, pressure: null, tab: 'overview' };
-const TABS = ['overview', 'memory', 'pressure', 'disk', 'internet', 'checks', 'dns'];
+const state = { done: null, watch: null, memHist: null, triage: null, openers: [], cache: null, light: null, dns: null, blocklist: null, network: null, pressure: null, tab: 'overview' };
+const TABS = ['overview', 'memory', 'pressure', 'disk', 'internet', 'checks', 'done', 'watch', 'dns'];
 
 const grid = (...f) => el('div', { class: 'grid' }, ...f.filter(Boolean));
 const at = (cls, node) => { node.classList.add(cls); return node; };
@@ -641,6 +641,7 @@ function memory(d) {
   // no number says so, and says which counter is missing — the absence is a
   // fact about the machine, not a blank to be filled with a zero. A zero here
   // would read as "this machine has never been under memory pressure".
+  memoryPast(root);   // phase 4
   const count = (n) => (n == null ? null : n.toLocaleString('en-US'));
   const trips = g.swapins == null || g.swapouts == null ? null : count(g.swapins + g.swapouts);
   root.append(el('div', { class: 'section' }, el('h2', {}, 'Since this machine booted')));
@@ -755,6 +756,7 @@ function disk(c) {
   }
   tb.append(body);
   root.append(el('div', { class: 'scrollable' }, tb));
+  root.append(repoVerdicts(c));   // phase 4
 }
 
 /* A plain `du -sh ~/*` cannot see a folder starting with a dot — the shell does
@@ -1795,6 +1797,172 @@ function freeRamCard() {
   })));
 }
 
+/* ============================================================ PHASE 4
+   History, the watcher, and the remembered verdict. Everything here READS what
+   reckon already wrote inside ~/.cache/reckon/ (GET routes), except the three
+   verdict buttons, which write one small file there. Nothing on these tabs changes
+   the machine, and the watcher is never started from here: the panel shows the
+   command and you run it. */
+const when = (t) => (t ? new Date(t).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' }) : '—');
+const mbText = (mb) => (mb == null ? '—' : mb >= 1024 ? `${(mb / 1024).toFixed(1)} GB` : `${Math.round(mb)} MB`);
+
+/* ---------------------------------------------------------------- DONE */
+async function loadDone() {
+  const root = $('#tab-done');
+  try { state.done = await get('/api/done'); doneTab(state.done); }
+  catch (e) { root.textContent = ''; root.append(el('p', { class: 'empty' }, 'could not read the action log: ' + e.message)); }
+}
+
+function beforeAfter(r) {
+  const b = r.before, a = r.after;
+  if (!b || !a) return '—';
+  const parts = [];
+  if (b.availableMB != null && a.availableMB != null) parts.push(`available ${mbText(b.availableMB)} → ${mbText(a.availableMB)}`);
+  if (b.compressedMB != null && a.compressedMB != null) parts.push(`compressed ${mbText(b.compressedMB)} → ${mbText(a.compressedMB)}`);
+  if (b.pressure || a.pressure) parts.push(`pressure ${b.pressure || '?'} → ${a.pressure || '?'}`);
+  return parts.join(' · ') || '—';
+}
+
+function doneTab(d) {
+  const root = $('#tab-done');
+  root.textContent = '';
+  const rows = d.rows || [];
+  root.append(el('div', { class: 'verdict' },
+    el('p', { class: 'headline' }, rows.length ? 'What was done, and what it really freed.' : 'Nothing has been done from this panel yet.'),
+    el('p', { class: 'summary' }, 'Read from ', el('b', {}, short(d.file || 'actions.log')), '. Refused actions are listed too: a refusal is an answer. ',
+      '"Freed" is only a number the action measured itself; when it did not, this says so.')));
+  if (!rows.length) return;
+
+  const tb = el('table', { class: 'wide' });
+  tb.append(el('thead', {}, el('tr', {}, ...['When', 'Action', 'Outcome', 'Before / after', 'Freed', ''].map((h) => el('th', {}, h)))));
+  const body = el('tbody');
+  for (const r of rows) {
+    const out = el('div', { class: 'act-note', 'aria-live': 'polite' });
+    const checkBtn = r.outcome === 'refused' || r.outcome === 'dry-run' ? null : el('button', { class: 'copy', onclick: async () => {
+      out.textContent = 'measuring that target again…';
+      try {
+        const c = await get(`/api/done/check?at=${encodeURIComponent(r.at)}`);
+        out.textContent = c.kind === 'path' && c.exists
+          ? `${c.kb == null ? 'present, size unknown' : gb(kb2gb(c.kb)) + ' GB there now'}. ${c.note}`
+          : c.note;
+      } catch (e) { out.textContent = e.message; }
+    } }, 'check it');
+    body.append(el('tr', {},
+      el('td', { class: 'num' }, when(r.at)),
+      el('td', { class: 'name' }, el('div', {}, r.title || r.action || '—'),
+        el('div', { style: 'font:11.5px var(--mono);color:var(--ink3);margin-top:2px' }, r.target ? short(r.target) : (r.action || ''))),
+      el('td', {}, el('span', { class: 'tag' }, r.outcome), r.refused ? el('div', { class: 'act-note' }, r.refused) : null,
+        r.message ? el('div', { class: 'act-note' }, r.message) : null),
+      el('td', { style: 'color:var(--ink2);max-width:36ch' }, beforeAfter(r)),
+      el('td', { class: 'num' }, r.freedKB != null ? `${gb(kb2gb(r.freedKB))} GB` : (r.gone != null ? `${r.gone} process(es) gone` : '—')),
+      el('td', {}, r.trashed ? openBtn('trash', 'Open Trash') : null, checkBtn, out)));
+  }
+  tb.append(body);
+  root.append(el('div', { class: 'scrollable' }, tb));
+}
+
+/* --------------------------------------------------------------- WATCH */
+async function loadWatch() {
+  const root = $('#tab-watch');
+  try { state.watch = await get('/api/watchstate'); watchTab(state.watch); }
+  catch (e) { root.textContent = ''; root.append(el('p', { class: 'empty' }, 'could not read the watcher state: ' + e.message)); }
+}
+
+function watchTab(w) {
+  const root = $('#tab-watch');
+  root.textContent = '';
+  const s = w.snapshot;
+  const head = w.running ? 'reckon watch is running.' : w.status === 'never' ? 'reckon watch has never run here.' : 'reckon watch is not running.';
+  root.append(el('div', { class: 'verdict' },
+    el('p', { class: 'headline' }, head),
+    el('p', { class: 'summary' }, w.why, ' ',
+      w.running && s ? `Level ${Math.round((s.level || 0) * 100)} of 100, state "${s.state || '—'}"${s.active.length ? `, watching: ${s.active.join(', ')}` : ', nothing crossed a line'}. ` : '',
+      s && s.headline ? el('span', {}, el('b', {}, s.headline.title), ' ', s.headline.cost || '') : null)));
+
+  if (!w.running) {
+    root.append(el('div', { class: 'section' }, el('h2', {}, 'How to start it')),
+      el('p', { class: 'summary' }, 'The panel does not start it. Run this in your own terminal, from the reckon folder. ', w.startNote),
+      commandBlock(w.startWith, 'this panel does not start the watcher. you do.'));
+  }
+
+  if (s && w.running) {
+    root.append(grid(
+      tile('Last reading', `${Math.round(w.ageMs / 1000)}`, 's ago', `every ${Math.round((s.intervalMs || 30000) / 1000)} s; counted stopped after ${Math.round(w.staleAfterMs / 1000)} s of silence`),
+      s.reading && s.reading.swapOfRam != null ? tile('Swap', `${Math.round(s.reading.swapOfRam * 100)}`, '% of RAM', 'measured against the machine’s RAM, not the swap file') : null,
+      s.cost ? tile('The watcher itself', `${s.cost.rssMB}`, 'MB', `${s.cost.cpuPct}% of a core`) : null));
+  }
+
+  root.append(el('div', { class: 'section' }, el('h2', {}, 'The last events')));
+  if (!w.events.length) { root.append(el('p', { class: 'empty' }, 'No events yet. The watcher only writes one when something crosses a line or clears.')); return; }
+  const list = el('div', { class: 'act-groups' });
+  for (const e of w.events.slice(0, 15)) {
+    list.append(el('details', { class: 'act-group' },
+      el('summary', {}, el('b', {}, e.title || e.kind || 'event'), ` · ${e.type || ''} · ${when(e.at)}`),
+      e.cost ? el('p', {}, el('b', {}, 'Cost. '), e.cost) : null,
+      e.proof ? el('p', {}, el('b', {}, 'Proof. '), e.proof) : null,
+      e.lose ? el('p', {}, el('b', {}, 'What you lose. '), e.lose) : null,
+      e.command ? commandBlock(e.command) : null));
+  }
+  root.append(list);
+}
+
+/* ----------------------------------------------------- MEMORY, REMEMBERED */
+function memoryPast(root) {
+  const h = state.memHist;
+  const pts = (h && h.points) || [];
+  if (pts.length < 2) return;
+  const span = (pts[pts.length - 1].t - pts[0].t) / 3600000;
+  root.append(grid(at('c12', card({
+    title: 'Swap since the watcher started recording',
+    sub: `${pts.length} readings over ${span < 1 ? Math.round(span * 60) + ' min' : span.toFixed(1) + ' h'}, kept by reckon watch in ~/.cache/reckon/ so they survive a restart. The panel only reads them.`,
+    shape: areaChart({ vals: pts.map((p) => p.swapMB), rot: 'Swap', unit: 'MB' }),
+    table: tableOf(['When', 'Swap (MB)'], pts.filter((_, i) => i % Math.max(1, Math.floor(pts.length / 40)) === 0).map((p) => [when(p.t), p.swapMB])),
+  }))));
+}
+
+/* --------------------------------------------- REMEMBERED VERDICT, per repo */
+async function loadTriage() {
+  try { state.triage = await get('/api/triage'); } catch { state.triage = null; }
+  if (state.cache && state.cache.hasCache) { try { disk(state.cache); } catch { /* the tab draws itself again on render() */ } }
+}
+
+async function markRepo(path_, verdict) {
+  try {
+    const r = await fetch('/api/triage/mark', { method: 'POST', headers: authed({ 'content-type': 'application/json' }), body: JSON.stringify({ path: path_, verdict }) });
+    if (!r.ok) throw new Error(((await r.json().catch(() => ({}))).error) || `refused (${r.status})`);
+  } catch (e) { alert('Not saved: ' + e.message); }
+  await loadTriage();
+}
+
+function repoVerdicts(c) {
+  const repos = (c.repos?.repos || []).filter((r) => r.git && (!r.hasRemote || r.dirtyCount > 0 || r.onlyHere > 0));
+  const box = el('div', { class: 'triage' }, el('div', { class: 'section' }, el('h2', {}, 'Repositories that exist only here')));
+  if (!repos.length) { box.append(el('p', { class: 'empty' }, 'Every repository has a remote, nothing uncommitted and nothing unpushed.')); return box; }
+  box.append(el('p', { class: 'summary' }, 'Say once what each one is. The answer is remembered in ~/.cache/reckon/triage.json ',
+    'and expires by itself the moment the repo’s HEAD or its uncommitted files change. Marking deletes nothing.'));
+  const V = (state.triage && state.triage.verdicts) || {};
+  const tb = el('table', { class: 'wide' });
+  tb.append(el('thead', {}, el('tr', {}, ...['Repository', 'Why it is on this list', 'Your verdict', ''].map((h) => el('th', {}, h)))));
+  const body = el('tbody');
+  for (const r of repos) {
+    const why = [!r.hasRemote ? 'no remote: the only copy' : null, r.onlyHere > 0 ? `${r.onlyHere} commit(s) on no remote` : null,
+      r.dirtyCount > 0 ? `${r.dirtyCount} uncommitted file(s)` : null].filter(Boolean).join(' · ');
+    const v = V[r.path];
+    const verdictCell = !v ? el('span', { class: 'tag' }, 'unanswered')
+      : v.expired ? el('span', {}, el('span', { class: 'tag' }, `was ${v.verdict}: expired`), el('div', { class: 'act-note' }, v.why, ' Asking again.'))
+      : el('span', {}, el('span', { class: 'tag' }, v.verdict), el('div', { class: 'act-note' }, 'marked ', when(v.at)));
+    body.append(el('tr', {},
+      el('td', { class: 'name' }, el('div', {}, r.name), el('div', { style: 'font:11.5px var(--mono);color:var(--ink3);margin-top:2px' }, short(r.path))),
+      el('td', { style: 'color:var(--ink2);max-width:36ch' }, why),
+      el('td', {}, verdictCell),
+      el('td', {}, ...['keep', 'trash', 'maybe'].map((k) => el('button', { class: 'copy', onclick: () => markRepo(r.path, k) }, k)))));
+  }
+  tb.append(body);
+  box.append(el('div', { class: 'scrollable' }, tb));
+  box.append(el('p', { class: 'act-note' }, 'Archiving a repo as a git bundle before it is removed comes with the disk actions. Nothing here does it yet.'));
+  return box;
+}
+
 /* ------------------------------------------------------------------ tabs */
 function render() {
   // Each tab draws inside its own try: a payload that breaks one of them used
@@ -1839,6 +2007,9 @@ function goTo(tab, noHash) {
   // Cheap on purpose: configuration plus five packets to machines this
   // computer already uses. The two paid readings live behind their buttons.
   if (tab === 'internet') loadNetwork(false);
+  if (tab === 'done') loadDone();
+  if (tab === 'watch') loadWatch();
+  if (tab === 'disk') loadTriage();
   if (tab === 'dns' && !state.dns) {
     Promise.all([get('/api/dns'), get('/api/blocklist')]).then(([d, b]) => {
       state.dns = d; state.blocklist = b; dns(d);
@@ -1849,6 +2020,7 @@ function goTo(tab, noHash) {
 
 async function refreshLight() {
   state.light = await get('/api/light');
+  state.memHist = await get('/api/memory/history').catch(() => null);   // phase 4: read-only
   try { memory(state.light); }
   catch (e) { startupFailure('drawing the Memory tab', e); throw e; }
   const m = state.light.memory;

@@ -1,6 +1,6 @@
 # Triage tab — sorting what exists only on this machine
 
-**Status:** approved design, not yet implemented
+**Status:** part A (the remembered verdict per repo) is implemented in lib/triage.js (2026-10-07). Not built yet: the archive step (it waits for the disk actions, Phase 3), the path allowlist for removal commands, the propagation into the Overview total, and the inventory of folders with no git.
 **Date:** 2026-09-11
 **Scope:** sub-project A of four (A triage → B history → D single script + verify → C live slowness)
 
@@ -28,7 +28,7 @@ thrown away yet**. `a private project` is new and matters; `bass` might be scrap
 someday; the rest can go.
 
 That correction is the whole design. Unique ≠ precious. The panel structurally cannot
-tell the two apart — which is exactly the `não sei` verdict it already uses elsewhere.
+tell the two apart — which is exactly the `cannot judge` verdict it already uses elsewhere.
 So the feature is not an alarm. It is a **sorting workflow with memory**: the panel
 lists what exists only here, the owner classifies each item once, and the panel never
 asks again.
@@ -37,7 +37,7 @@ asks again.
 
 It gives the panel something it does not have: **a record of the owner's judgment**.
 Once `simulation` is marked as trash, the whole repository becomes reclaimable space in
-Panorama — not just its `node_modules`. Once `a private project` is marked keep, it becomes a
+Overview — not just its `node_modules`. Once `a private project` is marked keep, it becomes a
 standing to-do with the command that gets it off this machine.
 
 ## Architecture
@@ -45,11 +45,11 @@ standing to-do with the command that gets it off this machine.
 A new tab, plus a state file that is deliberately kept out of the scan.
 
 ```
-lib/triagem.js          inventory + verdict storage + fingerprinting
+lib/triage.js          inventory + verdict storage + fingerprinting
   ~/.cache/reckon/triage.json     the owner's answers (not the machine's measurements)
-server.js               GET /api/triagem · POST /api/triagem/marcar
-web/app.js              the tab, and the propagation into Panorama
-lib/decisoes.js         reads verdicts; a `lixo` repo becomes a removable item
+server.js               GET /api/triage · POST /api/triage/mark
+web/app.js              the tab, and the propagation into Overview
+lib/decisions.js         reads verdicts; a `trash` repo becomes a removable item
 ```
 
 **The state file is separate from `scan.json` on purpose.** Folding a human verdict
@@ -77,24 +77,24 @@ not do" in the README so they enter when they are actually missed rather than on
 
 ### Verdicts
 
-Four states: `guardar`, `lixo`, `talvez`, and the implicit *unanswered*.
+Four states: `keep`, `trash`, `maybe`, and the implicit *unanswered*.
 
 ```json
 {
-  "itens": {
+  "items": {
     "/Users/you/www/bass": {
-      "veredito": "talvez",
-      "em": 1789154694515,
-      "impressao": { "commit": "3bed4a8", "sujos": 62, "temRemoto": false }
+      "verdict": "maybe",
+      "at": 1789154694515,
+      "fingerprint": { "commit": "3bed4a8", "dirty": 62, "hasRemote": false }
     }
   },
-  "em": 1789154694515
+  "at": 1789154694515
 }
 ```
 
 ### The fingerprint — the forcing function
 
-Every verdict carries `{commit, sujos, temRemoto}` captured at the moment it was given.
+Every verdict carries `{commit, dirty, hasRemote}` captured at the moment it was given.
 On each scan the panel recomputes those three values and compares.
 
 **If any of them changed, the verdict expires.** The item returns to the tab carrying
@@ -107,11 +107,11 @@ A verdict whose path no longer exists is dropped from the file on the next write
 
 ### What each verdict does
 
-| verdict | in the Triage tab | in Panorama |
+| verdict | in the Triage tab | in Overview |
 |---|---|---|
-| `guardar` | becomes a standing to-do with the command that gets it off this machine | nothing changes |
-| `lixo` | archive and removal shown side by side, with both sizes | the **whole repository** becomes reclaimable space, not just its `node_modules` |
-| `talvez` | stays listed, no nagging, counted in the tab header | nothing changes |
+| `keep` | becomes a standing to-do with the command that gets it off this machine | nothing changes |
+| `trash` | archive and removal shown side by side, with both sizes | the **whole repository** becomes reclaimable space, not just its `node_modules` |
+| `maybe` | stays listed, no nagging, counted in the tab header | nothing changes |
 | unanswered | this is what the tab is asking for | nothing changes |
 
 ### Archive before delete — and the trap inside it
@@ -154,17 +154,17 @@ commands and an extra step on something he is certain about is friction, not saf
 4. **A dirty tree blocks nothing but is always stated.** The count of uncommitted files
    appears in the "what you lose" line for every item that has one.
 5. **Expired verdicts never act.** An item whose fingerprint changed contributes nothing
-   to Panorama's total until it is reconfirmed.
+   to Overview's total until it is reconfirmed.
 
 ## Testing
 
-Added to `bin/testar.js`:
+Added to `bin/check.js`:
 
-- a verdict outside `{guardar, lixo, talvez}` is rejected
+- a verdict outside `{keep, trash, maybe}` is rejected
 - a changed fingerprint marks a verdict expired (construct a stored verdict, change the
   commit, assert expiry)
 - a path outside the allowlist is refused, both for marking and for command generation
-- an expired verdict contributes zero to the Panorama total
+- an expired verdict contributes zero to the Overview total
 - the existing shared-scope and CSS-class checks cover the new tab's markup
 
 ## Acceptance criteria
@@ -172,11 +172,11 @@ Added to `bin/testar.js`:
 1. The tab lists the 4 repos with no remote, the 2 unversioned folders with content, and
    the 4 repos holding unpushed commits.
 2. Marking an item and reloading the page preserves the mark.
-3. Committing into a repo marked `lixo` invalidates the mark, and the tab says why.
-4. Marking a repo `lixo` increases Panorama's reclaimable total by the whole repo.
+3. Committing into a repo marked `trash` invalidates the mark, and the tab says why.
+4. Marking a repo `trash` increases Overview's reclaimable total by the whole repo.
 5. An item with uncommitted changes shows the commit-or-stash step above the bundle, and
    its "what you lose" line counts committed and uncommitted work separately.
-6. `node bin/testar.js` passes.
+6. `node bin/check.js` passes.
 
 ## Deliberately not in this version
 

@@ -13,6 +13,12 @@ const pressure = require('./lib/pressure');
 const act = require('./lib/act');
 // ---- end phase 2 requires ---------------------------------------------------
 
+// ---- phase 4: history, watcher view, remembered verdicts (requires)
+const history = require('./lib/history');
+const triage = require('./lib/triage');
+const platform4 = require('./lib/platform');
+// ---- end phase 4 requires
+
 // ---- phase 1: open-only actions (separate block, to ease merging)
 const opener = require('./lib/open');
 // ---- end phase 1 require
@@ -230,6 +236,24 @@ const server = http.createServer(async (req, res) => {
       blocklist.remove(body.domain);
       return json(res, await blocklist.collect());
     }
+
+    // ---- phase 4 routes. The first four are GET and only read what reckon already wrote
+    // (or measure one path again). Marking a verdict is a POST behind the token and writes
+    // one file inside ~/.cache/reckon/.
+    if (route === '/api/done' && req.method === 'GET') return json(res, history.readDone());
+    if (route === '/api/done/check' && req.method === 'GET') {
+      const r = await history.recheck({ at: Number(url.searchParams.get('at')), sizeOf: (p) => platform4.dirSizeKB(p, 60000) });
+      return json(res, r, r.ok ? 200 : 400);
+    }
+    if (route === '/api/watchstate' && req.method === 'GET') return json(res, history.readWatch());
+    if (route === '/api/memory/history' && req.method === 'GET') return json(res, history.readMemory());
+    if (route === '/api/triage' && req.method === 'GET') return json(res, await triage.status());
+    if (route === '/api/triage/mark' && req.method === 'POST') {
+      const body = await readBody(req);
+      const r = await triage.mark(body.path, body.verdict, { scanData: scan.readCache() });
+      return json(res, r, r.ok ? 200 : 400);
+    }
+    // ---- end phase 4 routes
 
     // ---- phase 1: open-only actions. The body is { id, target? }; only `reveal` takes a
     // target, and only a path the last scan measured. Nothing here modifies anything.
