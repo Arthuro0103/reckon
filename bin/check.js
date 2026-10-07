@@ -1845,15 +1845,27 @@ async function actions() {
     pids: [{ pid: 4242, comm: '/usr/bin/yes', startedAt: 0 }], main: { pid: 4242, comm: 'x', startedAt: 0 }, roots: [],
   };
   const check = { alive: [{ pid: 4242 }, { pid: 4243 }], roots: [{ pid: 4242 }] };
+  // Phase 3: the disk rows take a folder, a repository or volume names instead of pids.
+  const H = '/Users/sample';
+  const DISK_SAMPLES = {
+    'clear-cache': [{ members: [] }, { paths: [`${H}/.npm/_npx`], tool: null }],
+    'remove-node-modules': [{}, { paths: [`${H}/www/p/node_modules`] }],
+    'remove-worktree': [{}, { main: `${H}/www/r`, wt: `${H}/www/wt/a` }],
+    'move-to-trash': [{}, { bin: '/usr/bin/trash', path: `${H}/Library/Application Support/MobileSync/Backup` }],
+    'docker-volume-rm': [{ names: ['v1'] }, { names: ['v1'] }],
+  };
   const names = Object.keys(act.ACTIONS);
   for (const name of names) {
     const a = act.ACTIONS[name];
     const missing = ['label', 'kind'].filter((k) => typeof a[k] !== 'string')
       .concat(['confirm', 'describe', 'lose', 'undo', 'verify', 'argv', 'settle'].filter((k) => typeof a[k] !== 'function'))
-      .concat(typeof a.reversible === 'boolean' ? [] : ['reversible']);
+      .concat(typeof a.reversible === 'boolean' ? [] : ['reversible'])
+      .concat(a.kind === 'disk' && !act.REMOVAL[a.removal] ? ['removal'] : [])
+      .concat(a.twice && typeof a.again !== 'function' ? ['again'] : []);
     if (missing.length) { fail(`action ${name} is missing ${missing.join(', ')}`); continue; }
     let argv;
-    try { argv = a.argv(sample, check); act.assertSafe(...argv); }
+    const [ts, tc] = DISK_SAMPLES[name] || [sample, check];
+    try { argv = a.argv(ts, tc); act.assertSafe(...argv); }
     catch (e) { fail(`action ${name} builds an argv the gate refuses`, e.message); continue; }
     const flat = [argv[0], ...argv[1]].join(' ');
     if (/\bsudo\b/.test(flat) || !act.ALLOWED_COMMANDS.includes(argv[0])) fail(`action ${name} would run ${flat}`);
@@ -2038,6 +2050,363 @@ async function actions() {
 
   // --- for real, in a sandbox -------------------------------------------
   await actSandbox();
+
+  // --- phase 3: disk -----------------------------------------------------
+  await diskActions(act);
+  await diskSandbox();
+}
+
+// ---------------------------------------------------------------------------
+// Phase 3: the disk actions. The bad paths are planted first, because a guard
+// that has never refused anything proves nothing. Everything here runs in
+// temporary folders this test made; tool cleaners (npm, brew, go, pip, simctl,
+// docker) and the Trash are only ever looked at as argv in a dry run.
+// ---------------------------------------------------------------------------
+async function diskActions(act) {
+  const os = require('node:os');
+  if (process.platform === 'win32') { ok('(disk actions are macOS-only; not tested on Windows)'); return; }
+
+  // --- the gate: shapes the table must never produce -----------------------
+  const gate = [
+    ['git', ['-C', '/Users/x/r', 'worktree', 'remove', '--force', '/Users/x/w']], ['git', ['-C', '/Users/x/r', 'worktree', 'remove', '-f']],
+    ['git', ['-C', '/Users/x/r', 'reset', '--hard', 'HEAD']], ['git', ['-C', 'r', 'worktree', 'remove', '/Users/x/w']],
+    ['docker', ['system', 'prune', '-a', '-f']], ['docker', ['system', 'prune', '-f', '--volumes']], ['docker', ['builder', 'prune', '-a', '-f']],
+    ['docker', ['volume', 'rm', 'x; rm -rf ~']], ['docker', ['volume', 'prune', '-f']], ['docker', ['rm', '-f', 'db']],
+    ['npm', ['install', 'evil']], ['brew', ['uninstall', 'git']], ['go', ['clean', '-modcache']], ['pip', ['uninstall', 'x']],
+    ['osascript', ['-e', 'on run argv', '-e', 'do shell script "rm -rf ~"', '-e', 'end run', '/Users/x/a']],
+    ['osascript', ['-e', 'tell application "Finder" to delete (POSIX file "/")']],
+    ['/usr/bin/trash', ['-s', 'relative']], ['/usr/bin/trash', ['-s', '/']], ['/usr/bin/trash', ['/Users/x/a', '/Users/x/b']],
+    ['safe-remove', ['relative/x']], ['safe-remove', ['/Users/x/../../etc']], ['safe-remove', ['/']], ['safe-remove', []],
+    ['xcrun', ['simctl', 'delete', 'all']], ['rm', ['-rf', '/Users/x/.npm']], ['sudo', ['npm', 'cache', 'clean', '--force']],
+  ];
+  const through = gate.filter(([c, a]) => { try { act.assertSafe(c, a); return true; } catch { return false; } });
+  if (!through.length) ok(`the gate refuses all ${gate.length} disk shapes the table must never produce (--force, -a, --volumes, a script, a relative path…)`);
+  else fail('the gate let a forbidden disk argv through', through.map(([c, a]) => [c, ...a].join(' ')).join(' | '));
+  const sudoFree = Object.keys(act.ACTIONS).every((n) => !/\bsudo\b/.test(String(act.ACTIONS[n].argv)));
+  if (sudoFree && !act.ALLOWED_COMMANDS.some((c) => /sudo|^rm$|^sh$|bash|zsh/.test(c))) ok('no action builds sudo, rm or a shell: removal is safeRemove() in-process');
+  else fail('an action can build sudo, rm or a shell');
+
+  // --- safeRemove against planted bad paths --------------------------------
+  const H = fs.mkdtempSync(path.join(os.tmpdir(), 'reckon-rm-check-'));
+  const OUT = fs.mkdtempSync(path.join(os.tmpdir(), 'reckon-rm-outside-'));
+  try {
+    const mk = (...p) => { const d = path.join(H, ...p); fs.mkdirSync(d, { recursive: true }); fs.writeFileSync(path.join(d, 'f'), 'x'); return d; };
+    fs.writeFileSync(path.join(OUT, 'precious'), 'outside home');
+    const caches = path.join(H, 'Library', 'Caches');
+    const good = mk('Library', 'Caches', 'good');
+    const sibling = mk('Library', 'Caches', 'sibling');
+    const docs = mk('Documents', 'x'), desk = mk('Desktop', 'x'), down = mk('Downloads', 'x'), icloud = mk('Library', 'Mobile Documents', 'x');
+    mk('.ssh'); mk('.npm'); mk('www');
+    const linkOut = path.join(caches, 'link-out'); fs.symlinkSync(OUT, linkOut);
+    const viaLink = path.join(caches, 'via-link'); fs.symlinkSync(OUT, viaLink);
+    const throughLink = path.join(viaLink, 'precious');
+    const linkIn = path.join(caches, 'link-in'); fs.symlinkSync(good, linkIn);
+    const notListed = mk('Library', 'Caches', 'not-listed');
+    const bad = {
+      'the root': '/', '/System': '/System', '/Applications': '/Applications', 'home itself': H,
+      '~/Library': path.join(H, 'Library'), '~/Library/Caches': caches, 'a file in ~/Documents': docs, '~/Desktop': desk, '~/Downloads': down,
+      'iCloud Drive': icloud, 'the ~/.ssh dotfile': path.join(H, '.ssh'), 'the ~/.npm dotfile': path.join(H, '.npm'), 'a top folder of home': path.join(H, 'www'),
+      'a relative path': 'Library/Caches/good', 'a path with ..': path.join(caches, 'good') + '/../../../Documents/x',
+      'a trailing slash': good + '/', 'a symlink that leads outside home': linkOut, 'a path through a symlink out of home': throughLink,
+      'a symlink inside home': linkIn, 'a folder outside home': OUT, 'a path not in the table': notListed, 'a NUL byte': good + '\0x', 'not a string': null,
+    };
+    const allowed = Object.values(bad).filter((p) => typeof p === 'string').concat([good]);
+    const passed = Object.entries(bad).filter(([why, p]) => {
+      const c = act.checkRemovable(p, { home: H, allowed: why === 'a path not in the table' ? [good] : allowed });
+      return c.ok;
+    });
+    if (!passed.length) ok(`safeRemove refuses all ${Object.keys(bad).length} planted bad paths (root, home, ~/Library, ~/Documents, dotfiles, .., symlink escapes, outside home, not in the table)`);
+    else fail('safeRemove accepted a planted bad path', passed.map(([w]) => w).join(', '));
+    // Every refusal above is a refusal BEFORE fs.rm: nothing planted is gone.
+    for (const [why, p] of Object.entries(bad)) act.safeRemove(p, { home: H, allowed: why === 'a path not in the table' ? [good] : allowed });
+    const intact = [docs, desk, down, icloud, notListed, path.join(H, '.ssh'), path.join(H, '.npm'), path.join(H, 'www'), good].every((d) => fs.existsSync(path.join(d, 'f')))
+      && fs.existsSync(path.join(OUT, 'precious')) && fs.lstatSync(linkOut).isSymbolicLink();
+    if (intact) ok('after safeRemove was called on every planted bad path, every one of them is still there, and so is the file outside home');
+    else fail('safeRemove removed something it refused');
+    const r = act.safeRemove(good, { home: H, allowed: [good] });
+    if (r.ok && !fs.existsSync(good) && fs.existsSync(path.join(sibling, 'f'))) ok('safeRemove removes the one listed folder, and its sibling stays');
+    else fail('safeRemove did not remove exactly the listed folder', JSON.stringify(r));
+    if (!act.checkRemovable(good, { home: '/', allowed: [good] }).ok) ok('with HOME set to /, nothing is removable');
+    else fail('HOME=/ made a path removable');
+  } finally { fs.rmSync(H, { recursive: true, force: true }); fs.rmSync(OUT, { recursive: true, force: true }); }
+
+  // --- the engine, on a fake machine, in a dry run -------------------------
+  const decisions = require(path.join(ROOT, 'lib/decisions.js'));
+  const platform = require(path.join(ROOT, 'lib/platform'));
+  const FH = fs.mkdtempSync(path.join(os.tmpdir(), 'reckon-disk-check-'));
+  const ran = [], logged = [];
+  try {
+    const P = (...x) => path.join(FH, ...x);
+    for (const d of [P('.npm', '_npx'), P('.npm', '_cacache'), P('.Trash'), P('Library', 'Application Support', 'MobileSync', 'Backup'), P('www', 'p', 'node_modules'), P('www', 'wt', 'a')]) {
+      fs.mkdirSync(d, { recursive: true }); fs.writeFileSync(path.join(d, 'f'), 'x');
+    }
+    const known = [
+      { id: 'npm-npx', path: P('.npm', '_npx'), verdict: 'disposable', label: 'npx', lose: 'n', command: 'rm -rf x' },
+      { id: 'npm-cacache', path: P('.npm', '_cacache'), verdict: 'disposable', label: 'npm cache', lose: 'n', command: 'npm cache clean --force' },
+      { id: 'trash', path: P('.Trash'), verdict: 'disposable', label: 'Trash', lose: 'n', command: 'rm -rf ~/.Trash/*' },
+      { id: 'ios-backups', path: P('Library', 'Application Support', 'MobileSync', 'Backup'), verdict: 'yours', label: 'iPhone backups', lose: 'n', command: null },
+    ];
+    const fake = { hash: 'abc1234', dirty: '', tracked: false, off: '0', dangling: 'vol_a\nvol_b\n', stopped: 'old_db\n' };
+    const read = async (cmd, args) => {
+      const a = args.join(' ');
+      const R = (out) => ({ ok: true, out, erro: null });
+      if (cmd === 'git' && /log -1/.test(a)) return R(fake.hash + '\n');
+      if (cmd === 'git' && /status --porcelain/.test(a)) return R(fake.dirty);
+      if (cmd === 'git' && /ls-files/.test(a)) return fake.tracked ? R('node_modules/x\n') : { ok: false, out: '', erro: 'did not match' };
+      if (cmd === 'git' && /git-common-dir/.test(a)) return R(P('www', 'r', '.git') + '\n');
+      if (cmd === 'git' && /worktree list/.test(a)) return R(`worktree ${P('www', 'r')}\n\nworktree ${fs.realpathSync(P('www', 'wt', 'a'))}\n`);
+      if (cmd === 'git' && /rev-list/.test(a)) return R(fake.off + '\n');
+      if (cmd === 'docker' && /^info/.test(a)) return R('27.0.0\n');
+      if (cmd === 'docker' && /dangling/.test(a)) return R(fake.dangling);
+      if (cmd === 'docker' && /^ps/.test(a)) return R(fake.stopped);
+      if (cmd === 'docker' && /system df/.test(a)) return R('Build Cache\t3GB\n');
+      if (cmd === 'xcrun') return R(JSON.stringify({ devices: { 'iOS-15': [{ udid: 'U1' }] } }));
+      return { ok: false, out: '', erro: 'not faked' };
+    };
+    let tools = new Set();
+    let trashBin = '/usr/bin/trash';
+    const make = () => act.createEngine({
+      dryRun: true, minDelayMs: 0, home: () => FH, known: () => known, sizeKB: async () => 2048, read,
+      which: (c) => tools.has(c), trashBin: () => trashBin, volume: async () => ({ freeKB: 1000 }),
+      memoryStats: async () => null, memoryPressure: async () => null,
+      exec: async (cmd, args) => { ran.push([cmd, ...args]); return { ok: true, out: '', erro: null }; },
+      log: { append: (e) => { logged.push(e); return true; } },
+    });
+    const isMac = platform.id === 'darwin';
+    const targets = known.map((k) => ({ ...k, kb: 300000 }));
+    const repos = { repos: [{ name: 'p', path: P('www', 'p'), git: true, stale: true, days: 400, nodeModulesKB: 300000, lastHash: 'abc1234', dirtyCount: 0, off: 0, hasRemote: true, manager: 'npm', lastCommit: '2025-01-01' }],
+      worktrees: [{ name: 'wt/a', path: P('www', 'wt', 'a'), base: 'main', off: 0, days: 60, sizeKB: 300000, dirtyCount: 0 }] };
+    const dk = { running: true, volumes: [{ name: 'vol_a', situation: 'orphan', uses: [] }, { name: 'vol_b', situation: 'orphan', uses: [] }],
+      counted: [{ type: 'Build Cache', reclaimable: '3GB', reclaimableKB: 3145728 }, { type: 'Containers', reclaimable: '400MB', reclaimableKB: 409600 }] };
+    const panel = decisions.build({ docker: dk, targets, repos });
+    const rows = [...panel.out, ...panel.stay].filter((r) => r.action);
+    if (!isMac) { if (!rows.length) ok('off macOS no decision row gets a Do button'); else fail('a decision row got an action off macOS'); return; }
+    const byAction = (id, f = () => true) => rows.find((r) => r.action.id === id && f(r));
+    const want = ['clear-cache', 'empty-trash', 'move-to-trash', 'remove-node-modules', 'remove-worktree', 'docker-volume-rm', 'docker-builder-prune', 'docker-system-prune'];
+    const absent = want.filter((w) => !byAction(w));
+    if (!absent.length && rows.every((r) => /^d[0-9a-f]{24}$/.test(r.action.ref) && r.action.removal && ['high', 'medium'].includes(r.confidence))) {
+      ok(`decisions give ${rows.length} rows an action from the table, each with a ref, a removal label and confidence high or medium`);
+    } else fail('decisions did not attach the expected actions', `missing ${absent.join(', ')}`);
+    if (!rows.some((r) => r.action.id === 'move-to-trash' && /node_modules|www/.test(r.target.path || ''))) ok('only iOS backups and Mail downloads go to the Trash: no repository is offered');
+    else fail('a repository was offered for the Trash');
+
+    let e = make();
+    e.remember('disk', rows);
+    const go = async (row, body = {}) => {
+      const p = await e.preview({ action: row.action.id, id: row.action.ref, ...body });
+      if (!p.ok) return { p };
+      return { p, r: await e.run({ action: row.action.id, id: row.action.ref, nonce: p.nonce }) };
+    };
+    // clear-cache: removal in-process, or the tool's own cleaner when it is on PATH
+    const npx = byAction('clear-cache', (r) => r.target.members[0].id === 'npm-npx');
+    const a1 = await go(npx);
+    if (a1.r && a1.r.dryRun && a1.r.argv[0] === 'safe-remove' && a1.r.argv[1] === P('.npm', '_npx') && a1.p.removal === 'regenerable' && /for good/.test(a1.p.removalLabel)) ok('a cache with no tool of its own: safe-remove of exactly its folder, labelled "regenerable, removed for good"');
+    else fail('clear-cache built the wrong thing', JSON.stringify(a1));
+    const cacache = byAction('clear-cache', (r) => r.target.members[0].id === 'npm-cacache');
+    tools = new Set(['npm']);
+    const a2 = await go(cacache);
+    tools = new Set();
+    const a3 = await go(cacache);
+    if (a2.r && a2.r.argv.join(' ') === 'npm cache clean --force' && a3.r && a3.r.argv[0] === 'safe-remove') ok('npm cache: `npm cache clean --force` when npm is on PATH, safe-remove of its folder when it is not');
+    else fail('the tool-first rule is wrong', JSON.stringify([a2.r, a3.r]));
+    // A target whose path is not where the table says.
+    e.remember('disk', [{ ...npx, target: { members: [{ id: 'npm-npx', path: P('Documents') }] } }]);
+    const moved = await e.preview({ action: 'clear-cache', id: npx.action.ref });
+    if (!moved.ok && /table/.test(moved.refused)) ok('a cache row whose path is not the one in reckon\'s own table is refused');
+    else fail('a cache row with a foreign path was accepted', JSON.stringify(moved));
+    e.remember('disk', rows);
+
+    // node_modules: changed since the scan is refused
+    const nm = byAction('remove-node-modules');
+    fake.hash = 'def5678';
+    const c1 = await e.preview({ action: nm.action.id, id: nm.action.ref });
+    fake.hash = 'abc1234'; fake.dirty = ' M src/a.js\n';
+    const c2 = await e.preview({ action: nm.action.id, id: nm.action.ref });
+    fake.dirty = ''; fake.tracked = true;
+    const c3 = await e.preview({ action: nm.action.id, id: nm.action.ref });
+    fake.tracked = false;
+    if (!c1.ok && /commit since the scan/.test(c1.refused) && !c2.ok && /uncommitted files changed/.test(c2.refused) && !c3.ok && /commits its node_modules/.test(c3.refused)) {
+      ok('node_modules: a commit since the scan, a changed set of uncommitted files, or a committed node_modules, each refuses');
+    } else fail('node_modules accepted a repository that changed since the scan', JSON.stringify([c1.refused, c2.refused, c3.refused]));
+    // and a change between the preview and the click
+    const pn = await e.preview({ action: nm.action.id, id: nm.action.ref });
+    fake.dirty = '?? new.txt\n';
+    const rn = await e.run({ action: nm.action.id, id: nm.action.ref, nonce: pn.nonce });
+    fake.dirty = '';
+    if (pn.ok && !rn.ok) ok('node_modules: a file changed between the preview and the click, refused at the click');
+    else fail('a repository that changed after the preview was acted on', JSON.stringify(rn));
+    const a4 = await go(nm);
+    if (a4.r && a4.r.argv.join(' ') === `safe-remove ${P('www', 'p', 'node_modules')}`) ok('node_modules unchanged since the scan: only <repo>/node_modules is removed');
+    else fail('remove-node-modules built the wrong argv', JSON.stringify(a4));
+
+    // worktree: git worktree remove, never --force
+    const wt = byAction('remove-worktree');
+    const a5 = await go(wt);
+    fake.off = '2';
+    const a6 = await e.preview({ action: wt.action.id, id: wt.action.ref });
+    fake.off = '0';
+    if (a5.r && a5.r.argv[0] === 'git' && a5.r.argv.includes('remove') && !a5.r.argv.some((x) => /^-(f|-force)$/.test(x)) && !a6.ok) ok('worktree: `git -C <main> worktree remove <path>` without --force, refused once it has commits off main');
+    else fail('remove-worktree is wrong', JSON.stringify([a5, a6]));
+
+    // the user's things: the Trash, by /usr/bin/trash or Finder
+    const ios = byAction('move-to-trash');
+    const a7 = await go(ios);
+    trashBin = null;
+    const a8 = await go(ios);
+    trashBin = '/usr/bin/trash';
+    if (a7.r && a7.r.argv[0] === '/usr/bin/trash' && a8.r && a8.r.argv[0] === 'osascript' && a8.r.argv.at(-1) === fs.realpathSync(ios.target.path) && a7.p.reversible && /put it back/.test(a7.p.removalLabel)) {
+      ok('iOS backups go to the Trash: /usr/bin/trash, else Finder with the path as an argument (never inside the script), labelled "you can put it back"');
+    } else fail('move-to-trash is wrong', JSON.stringify([a7, a8]));
+
+    // empty the Trash: two confirmations, held by the server
+    const tr = byAction('empty-trash');
+    const s1 = await e.preview({ action: tr.action.id, id: tr.action.ref });
+    const early = await e.run({ action: tr.action.id, id: tr.action.ref, nonce: s1.nonce });
+    const s1b = await e.preview({ action: tr.action.id, id: tr.action.ref });
+    const s2 = await e.preview({ action: tr.action.id, id: tr.action.ref, nonce: s1b.nonce });
+    const done = await e.run({ action: tr.action.id, id: tr.action.ref, nonce: s2.nonce });
+    if (s1.stage === 1 && !early.ok && /second confirmation/.test(early.refused) && s2.stage === 2 && done.ok && done.argv.join(' ') === 'osascript -e tell application "Finder" to empty trash') {
+      ok('emptying the Trash needs two confirmations; the first one\'s nonce cannot run');
+    } else fail('the Trash double confirmation is wrong', JSON.stringify([s1.stage, early, s2.stage, done]));
+
+    // docker
+    const vol = byAction('docker-volume-rm');
+    fake.dangling = 'vol_a\n';
+    const v1 = await e.preview({ action: vol.action.id, id: vol.action.ref });
+    fake.dangling = 'vol_a\nvol_b\n';
+    const v2 = await go(vol);
+    const bp = await go(byAction('docker-builder-prune'));
+    const sp = await go(byAction('docker-system-prune'));
+    if (!v1.ok && v2.r && v2.r.argv.join(' ') === 'docker volume rm vol_a vol_b' && bp.r.argv.join(' ') === 'docker builder prune -f --filter until=48h' && sp.r.argv.join(' ') === 'docker system prune -f') {
+      ok('docker: a volume that gained a container is refused; volume rm by name, builder prune until=48h, system prune with no -a and no --volumes');
+    } else fail('a docker action is wrong', JSON.stringify([v1, v2.r, bp.r, sp.r]));
+
+    // --- the queue -----------------------------------------------------------
+    e = make(); e.remember('disk', rows);
+    const items = [npx, nm, wt].map((r) => ({ action: r.action.id, id: r.action.ref }));
+    const qp = await e.previewQueue({ items });
+    const qr = qp.ok && await e.runQueue({ nonce: qp.nonce });
+    if (qp.ok && qp.items.length === 3 && qp.totalKB === 3 * 2048 && qr && qr.ok && qr.results.length === 3 && qr.results.every((x) => x.dryRun)) ok('queue: three rows, one preview with the summed total, one confirmation, run one by one');
+    else fail('the queue did not run its three rows', JSON.stringify([qp, qr]));
+    const withTrash = await e.previewQueue({ items: [...items, { action: tr.action.id, id: tr.action.ref }] });
+    if (!withTrash.ok) ok('emptying the Trash cannot ride in a queue: it has its own double confirmation');
+    else fail('empty-trash was queued');
+    e = make(); e.remember('disk', rows);
+    const qp2 = await e.previewQueue({ items });
+    fake.hash = 'fff0000';   // the repository moves on between the preview and the run
+    const qr2 = await e.runQueue({ nonce: qp2.nonce });
+    fake.hash = 'abc1234';
+    if (qr2 && !qr2.ok && qr2.results.length === 2 && qr2.results[0].ok && !qr2.results[1].ok && qr2.skipped === 1) ok('queue: it stops at the first refusal (the repo got a commit), and the rest is not started');
+    else fail('the queue did not stop at the first refusal', JSON.stringify(qr2));
+    const qr3 = await e.runQueue({ nonce: qp2.nonce });
+    if (!qr3.ok && /No queue preview/.test(qr3.refused)) ok('a queue nonce works once');
+    else fail('a queue nonce was accepted twice');
+
+    if (!ran.length && fs.existsSync(P('.npm', '_npx', 'f')) && fs.existsSync(P('www', 'p', 'node_modules', 'f'))) ok('dry run: nothing above ran, and every folder the test made is still there');
+    else fail('a dry-run test ran a command or removed a folder', JSON.stringify(ran));
+    if (logged.some((l) => l.dryRun) && logged.some((l) => l.refused)) ok('runs and refusals went to the action log');
+    else fail('the disk actions were not logged');
+  } finally { fs.rmSync(FH, { recursive: true, force: true }); }
+}
+
+// For real, in a child process with HOME in a temporary folder: the scan rows
+// are built from reckon's own table under that HOME, and only folders the test
+// made there are removed. Tool cleaners and the Trash are NOT run: `which` says
+// no tool exists, there is no trash binary, and exec refuses everything.
+async function diskSandbox() {
+  if (process.platform !== 'darwin') { ok('(sandboxed disk test runs on macOS only)'); return; }
+  if (process.env.RECKON_CHECK_CHILD) { ok('(sandboxed disk test runs once, in the parent suite)'); return; }
+  const os = require('node:os');
+  const { spawnSync } = require('node:child_process');
+  const realLog = path.join(os.homedir(), '.cache', 'reckon', 'actions.log');
+  const stamp = (f) => { try { const s = fs.statSync(f); return `${s.size}:${s.mtimeMs}`; } catch { return 'absent'; } };
+  const before = stamp(realLog);
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'reckon-disk-sandbox-'));
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'reckon-disk-outside-'));
+  fs.writeFileSync(path.join(outside, 'precious'), 'must survive');
+  const script = `
+    const os = require('node:os'), path = require('node:path'), fs = require('node:fs');
+    const { execFileSync } = require('node:child_process');
+    const ROOT = ${JSON.stringify(ROOT)};
+    const OUTSIDE = ${JSON.stringify(outside)};
+    if (os.homedir() !== process.env.HOME || !/reckon-disk-sandbox-/.test(os.homedir())) { console.log(JSON.stringify({ floor: 'HOME is not the sandbox' })); process.exit(0); }
+    const H = os.homedir();
+    const act = require(path.join(ROOT, 'lib/act.js'));
+    const decisions = require(path.join(ROOT, 'lib/decisions.js'));
+    const platform = require(path.join(ROOT, 'lib/platform'));
+    const { createLog } = require(path.join(ROOT, 'lib/actlog.js'));
+    const res = {};
+    (async () => {
+      try {
+        const known = platform.knownCacheTargets();
+        const npx = known.find((t) => t.id === 'npm-npx'), pw = known.find((t) => t.id === 'playwright');
+        res.inside = npx.path.startsWith(H) && pw.path.startsWith(H);
+        fs.mkdirSync(path.join(npx.path, 'pkg'), { recursive: true }); fs.writeFileSync(path.join(npx.path, 'pkg', 'f'), 'x');
+        fs.writeFileSync(path.join(H, '.npm', 'keep-me'), 'sibling');
+        fs.mkdirSync(path.dirname(pw.path), { recursive: true }); fs.symlinkSync(OUTSIDE, pw.path);   // planted: the cache folder is a link out of home
+        const repo = path.join(H, 'www', 'proj');
+        fs.mkdirSync(path.join(repo, 'node_modules', 'dep'), { recursive: true });
+        fs.writeFileSync(path.join(repo, 'node_modules', 'dep', 'index.js'), '1');
+        fs.writeFileSync(path.join(repo, 'package.json'), '{}');
+        fs.writeFileSync(path.join(repo, '.gitignore'), 'node_modules\\n');
+        const g = (...a) => execFileSync('git', ['-C', repo, '-c', 'user.name=t', '-c', 'user.email=t@t', '-c', 'commit.gpgsign=false', '-c', 'core.hooksPath=/dev/null', ...a], { encoding: 'utf8' }).trim();
+        execFileSync('git', ['init', '-q', repo]);
+        g('add', '.'); g('commit', '-qm', 'one');
+        const hash = () => g('log', '-1', '--format=%h');
+        const build = () => decisions.build({ docker: null, targets: [{ ...npx, kb: 200000 }, { ...pw, kb: 200000 }],
+          repos: { repos: [{ name: 'proj', path: repo, git: true, stale: true, days: 400, nodeModulesKB: 200000, lastHash: hash(), dirtyCount: 0, off: 0, hasRemote: true, manager: 'npm' }] } });
+        const exec = [];
+        const e = act.createEngine({ dryRun: false, minDelayMs: 0, which: () => null, trashBin: () => null,
+          exec: async (c, a) => { exec.push([c, ...a]); return { ok: false, out: '', erro: 'the sandbox runs no program' }; },
+          memoryStats: async () => null, memoryPressure: async () => null,
+          log: createLog({ dir: path.join(H, '.cache', 'reckon') }) });
+        let rows = [...build().out].filter((r) => r.action);
+        e.remember('disk', rows);
+        const row = (id, f) => rows.find((r) => r.action.id === id && (!f || f(r)));
+        const go = async (r) => { const p = await e.preview({ action: r.action.id, id: r.action.ref }); return p.ok ? e.run({ action: r.action.id, id: r.action.ref, nonce: p.nonce }) : p; };
+
+        const r1 = await go(row('clear-cache', (r) => r.target.members[0].id === 'npm-npx'));
+        res.npx = { ok: r1.ok, gone: !fs.existsSync(npx.path), sibling: fs.existsSync(path.join(H, '.npm', 'keep-me')), before: r1.before && r1.before.freeKB != null, after: r1.after && r1.after.freeKB != null };
+        const r2 = await go(row('clear-cache', (r) => r.target.members[0].id === 'playwright'));
+        res.link = { refused: !r2.ok && !!r2.refused, why: r2.refused, precious: fs.existsSync(path.join(OUTSIDE, 'precious')) };
+
+        fs.writeFileSync(path.join(repo, 'more.txt'), '2'); g('add', '.'); g('commit', '-qm', 'two');   // the repo moves on after the scan
+        const r3 = await go(row('remove-node-modules'));
+        res.changed = { refused: !r3.ok && /commit since the scan/.test(r3.refused || ''), still: fs.existsSync(path.join(repo, 'node_modules')) };
+        rows = [...build().out].filter((r) => r.action); e.remember('disk', rows);   // a new scan
+        const r4 = await go(row('remove-node-modules'));
+        res.nm = { ok: r4.ok, gone: !fs.existsSync(path.join(repo, 'node_modules')), repo: fs.existsSync(path.join(repo, 'package.json')) && fs.existsSync(path.join(repo, '.git')) };
+        res.exec = exec.length;
+        res.log = fs.readFileSync(path.join(H, '.cache', 'reckon', 'actions.log'), 'utf8').split('\\n').filter(Boolean).length;
+      } catch (err) { res.error = String(err && err.stack || err).split('\\n').slice(0, 2).join(' | '); }
+      console.log(JSON.stringify(res));
+    })();
+  `;
+  const r = spawnSync(process.execPath, ['-e', script], { encoding: 'utf8', timeout: 90000,
+    env: { ...process.env, HOME: home, USERPROFILE: home, RECKON_ACT_DRY_RUN: '' } });
+  let res;
+  try { res = JSON.parse(String(r.stdout).trim().split('\n').pop()); }
+  catch { res = { error: String(r.stderr || r.stdout).slice(0, 200) }; }
+  const precious = fs.existsSync(path.join(outside, 'precious'));
+  fs.rmSync(home, { recursive: true, force: true });
+  fs.rmSync(outside, { recursive: true, force: true });
+  if (res.floor || res.error) return fail('the sandboxed disk test did not run', res.floor || res.error);
+  if (res.inside) ok('in the sandbox, reckon\'s own table of caches points inside the temporary HOME');
+  else fail('the sandbox table pointed outside the temporary HOME');
+  if (res.npx && res.npx.ok && res.npx.gone && res.npx.sibling && res.npx.before && res.npx.after) ok('for real: the planted npx cache is removed, ~/.npm and its other file stay, free space read before and after');
+  else fail('the sandboxed cache removal is wrong', JSON.stringify(res.npx));
+  if (res.link && res.link.refused && res.link.precious && precious) ok('for real: a cache folder that is a link out of home is refused, and the file it points at survives');
+  else fail('a cache link out of home was followed', JSON.stringify(res.link));
+  if (res.changed && res.changed.refused && res.changed.still) ok('for real: a commit after the scan refuses the node_modules removal, and node_modules stays');
+  else fail('node_modules was removed from a repository that changed since the scan', JSON.stringify(res.changed));
+  if (res.nm && res.nm.ok && res.nm.gone && res.nm.repo) ok('for real: after a new scan, only <repo>/node_modules is removed; package.json and .git stay');
+  else fail('the sandboxed node_modules removal is wrong', JSON.stringify(res.nm));
+  if (res.exec === 0) ok('no program was run in the sandbox: removal is in-process, and no tool cleaner was reached');
+  else fail('the sandbox reached a program', String(res.exec));
+  if (res.log >= 2) ok(`actions.log was written inside the sandbox (${res.log} lines)`);
+  else fail('the sandbox action log is short', String(res.log));
+  if (stamp(realLog) === before) ok('the real ~/.cache/reckon/actions.log was not touched by the disk tests');
+  else fail('the disk tests wrote to the real actions.log');
 }
 
 // A child process with HOME (and so ~/.cache/reckon) in a fresh temporary folder.

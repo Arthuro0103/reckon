@@ -14,8 +14,11 @@ command, and stops. You run it.
 
 **The one exception, decided by the owner on 2026-10-07:** *reckon never does anything you
 did not click, and never anything outside the table of actions.* `lib/act.js` holds that
-table (today: quit an app gracefully, stop orphaned processes with SIGTERM and, as a separate
-later click, SIGKILL, shut iOS simulators down, quit an idle Docker Desktop). Everything else
+table (memory: quit an app gracefully, stop orphaned processes with SIGTERM and, as a separate
+later click, SIGKILL, shut iOS simulators down, quit an idle Docker Desktop; disk: clear a cache
+the table names, remove a parked repository's `node_modules`, `git worktree remove` without
+`--force`, move what is yours to the Trash, prune Docker without `-a` or `--volumes`, empty the
+Trash after two confirmations). A file is removed only by `safeRemove()` in that file. Everything else
 still ends as text. What an action must have, or the pull request is declined:
 
 - **A row in the table, and nowhere else.** No other file may run a command that changes

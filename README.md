@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="docs/img/banner.svg" alt="reckon: your computer is full, this tells you what to do about it. Local, read-only, never deletes." width="100%">
+  <img src="docs/img/banner.svg" alt="reckon: your computer is full, this tells you what to do about it. Local, deletes nothing you did not click." width="100%">
 </p>
 
-**reckon tells you what to do about a full or struggling computer, and never deletes anything itself.** It runs on your machine, on macOS and Windows, with no dependencies and no telemetry.
+**reckon tells you what to do about a full or struggling computer, and never deletes anything you did not click.** It runs on your machine, on macOS and Windows, with no dependencies and no telemetry.
 
 ## Why it exists
 
@@ -11,7 +11,7 @@ It started because my computer felt painfully slow. An AI assistant went through
 That is one machine and one author, so read it as the story of why the tool exists, not as a benchmark. Three decisions came out of it:
 
 1. **A decision, not a treemap.** Most disk tools draw the folders and leave the thinking to you. reckon opens with what you can free, and why each item is safe.
-2. **It never deletes anything.** It reads your machine, works out what it thinks, hands you the command, and stops. You run it. The one exception is memory: a few fixed actions, each behind a preview and your click (below).
+2. **It never deletes anything on its own.** It reads your machine, works out what it thinks, hands you the command, and stops. You run it, or you click **Do** on a row from its closed table of actions, read the preview and confirm (below).
 3. **"Cannot judge" is an answer.** It only calls something disposable when it can prove the machine rebuilds it. Everything else it names and leaves alone.
 
 ![The Overview tab: "You can free 9.95 GB", the items behind that number, and what changed since the last scan](docs/img/overview.png)
@@ -24,11 +24,26 @@ Every item carries three things, always: **how much it frees**, **the proof of t
 
 ![How reckon works: it reads your machine, judges every item, hands you the command, and you run it](docs/img/flow.svg)
 
-### It never deletes anything
+### It never deletes anything on its own
 
 Not a safety toggle, a design constraint. `reckon` writes only inside `~/.cache/reckon/`. It reads your machine, works out what it thinks, hands you the command, and stops. You run it.
 
 One exception, for memory only, decided on 2026-10-07: **reckon never does anything you did not click, and never anything outside its table of actions.** On the Memory and Pressure tabs a row it is sure enough about (`high` or `medium`) gets a **Do** button that can quit an app gracefully (it asks to save first), stop orphaned processes, shut iOS simulators down, or quit a Docker VM with no container running. The page sends only the row's id; the server measures the target again, shows a preview with the proof and what you lose, waits for your Confirm and five seconds you can cancel, runs the fixed command with no shell and no sudo, and shows memory before and after. Each one is logged in `~/.cache/reckon/actions.log`.
+
+The same engine acts on disk, from the last deep scan, decided by the owner the same day. What is **yours** goes to the Trash, where you can put it back; a **regenerable** cache is removed for good, and the button says which before you click. Every disk target is measured again at the click, and refused if it changed since the scan.
+
+| Do | What runs | Removal |
+|---|---|---|
+| Clear a cache the table names (npm, Homebrew, Go, pip, uv, Quick Look thumbnails) | the tool's own cleaner: `npm cache clean --force`, `brew cleanup --prune=all`, `go clean -cache`, `pip cache purge`, `uv cache clean`, `qlmanage -r cache` | regenerable, for good |
+| Clear any other cache the table names (browser caches, npx, Playwright, Xcode DerivedData, Gradle, Cargo…) | reckon's own `safeRemove()`: inside your home, on the table, no link along the path, never `~`, `~/Library`, `~/Documents`, `~/Desktop`, `~/Downloads` or a dotfile at the top of home | regenerable, for good |
+| `node_modules` of a parked repository | `safeRemove()` of `<repo>/node_modules` only, after checking there is no commit and no changed file since the scan | regenerable, for good |
+| A worktree already merged | `git worktree remove` without `--force`; if git refuses, its error is shown and nothing is forced | git |
+| iPhone and iPad backups, Mail attachment copies | `/usr/bin/trash`, or Finder when it is missing | to the Trash |
+| Unused Docker volumes, old build cache, stopped containers | `docker volume rm <names>` (re-checked unattached), `docker builder prune --filter until=48h`, `docker system prune` with no `-a` and no `--volumes` | Docker, for good |
+| Simulators whose iOS runtime is gone | `xcrun simctl delete unavailable` | for good |
+| Empty the Trash | Finder's Empty Trash, after **two** confirmations | for good |
+
+Rows can be ticked into a queue: one preview with the summed total, one confirmation, then one by one, each logged, stopping at the first one that is refused. After a run the screen shows free space before and after, read with a light `df`, not a new scan.
 
 That rule is why the interesting work is in the *judgement*, not in the deleting. A tool that deletes has to be conservative to be safe. A tool that only recommends can afford to say exactly what it found and exactly how sure it is.
 
@@ -40,7 +55,7 @@ The architecture follows from that. No framework, no bundler, **no dependencies 
 
 ## Who it is for
 
-Anyone with a full disk. reckon first knew only developer leftovers (package caches, `node_modules`, container logs), so on a machine that had never run `npm` it had little to say. It now also knows what any computer accumulates on its own: browser caches and offline site data for eight browsers, Windows Update leftovers, `Windows.old`, temporary files, the Recycle Bin, thumbnail and preview caches, Mail attachment copies, and iPhone backups. The last is listed and never offered for deletion, because it is often the only copy of photos from before the last iCloud sync.
+Anyone with a full disk. reckon first knew only developer leftovers (package caches, `node_modules`, container logs), so on a machine that had never run `npm` it had little to say. It now also knows what any computer accumulates on its own: browser caches and offline site data for eight browsers, Windows Update leftovers, `Windows.old`, temporary files, the Recycle Bin, thumbnail and preview caches, Mail attachment copies, and iPhone backups. The last is never offered for deletion, because it is often the only copy of photos from before the last iCloud sync: its only button moves it to the Trash, where you can put it back.
 
 ---
 
@@ -306,12 +321,15 @@ surface. Nothing else needs to change.
 
 ## What it does not do yet
 
-- **It deletes nothing.** The only things it can do are the memory actions in `lib/act.js`
-  (quit an app, stop processes, shut simulators down, quit an idle Docker VM), each after a
-  preview, a Confirm and a five-second countdown. Some things will **never** get a button:
-  anything that needs `sudo`, DNS changes, `/etc/hosts`, Time Machine snapshots, `purge` (a
-  placebo: it empties a file cache macOS already treats as free memory) and an automatic
-  `kill -9`, which is only ever offered as its own click after a polite stop was ignored.
+- **It deletes nothing you did not click.** The only things it can do are the rows of the table
+  in `lib/act.js` (memory: quit an app, stop processes, shut simulators down, quit an idle Docker
+  VM; disk: the table above), each after a preview, a Confirm and a five-second countdown. The
+  disk actions run on a Mac; on Windows those rows stay text to copy. Some things will **never** get a button: anything that needs
+  `sudo`, DNS changes, `/etc/hosts`, Time Machine snapshots, `purge` (a placebo: it empties a file
+  cache macOS already treats as free memory), an automatic `kill -9` (only ever offered as its
+  own click after a polite stop was ignored), `git worktree remove --force`, `docker system prune
+  -a` or `--volumes`, truncating a container log through `nsenter`, a repository or a vault, and
+  any folder that is not on the table.
 - **It follows up by comparison, not by watching.** It keeps exactly one scan back. Scan again
   and the Overview states free space then and now, and names the items that were on the list and
   are not any more. It does NOT claim to have caused the difference: free space moves because a
@@ -334,7 +352,7 @@ surface. Nothing else needs to change.
 - **Memory history dies with the process.** It lives in server memory, capped at 120 points.
 - **No login** — the server refuses any connection that is not loopback, and listens on
   `127.0.0.1` only. Do not expose it. This panel can see the whole machine, and that is a map
-  of it. The two routes that act (`POST /api/act/preview` and `/api/act/run`) also demand the
+  of it. The routes that act (`POST /api/act/preview`, `/api/act/run` and the two `/api/act/queue/*`) also demand the
   exact Host, an Origin of its own when one is sent, and a random token made fresh each time
   the server starts, so another web page open in your browser cannot reach them.
 - **macOS and Windows. Linux is not written yet.** Every reading goes through `lib/platform`,
@@ -347,7 +365,8 @@ surface. Nothing else needs to change.
 
 The one rule: **nothing in this repository may delete, move or overwrite anything outside
 `~/.cache/reckon/`, and nothing may change the machine except an action in the fixed table in
-`lib/act.js`, started by a click.** A pull request that runs a state-changing command anywhere
+`lib/act.js`, started by a click.** Files are removed only by `safeRemove()` in that file, which
+`bin/check.js` tests against planted bad paths first. A pull request that runs a state-changing command anywhere
 else, adds an action without its proof, what you lose and a preview, or adds one that needs
 `sudo`, will be declined. `bin/check.js` refuses all three.
 
