@@ -48,6 +48,7 @@ Anyone with a full disk. reckon first knew only developer leftovers (package cac
 
 ```bash
 npx @arthurparis/reckon          # http://127.0.0.1:4127
+npx @arthurparis/reckon --open   # the same, and opens it in your default browser
 ```
 
 Or from a clone:

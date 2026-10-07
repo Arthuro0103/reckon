@@ -7,6 +7,10 @@
 <title>reckon</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230b1a26'/%3E%3Cpath d='M9 23V9h7a4 4 0 010 8H9l9 6' fill='none' stroke='%2319a2b8' stroke-width='2.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
 <link rel="stylesheet" href="/style.css">
+<script>
+/* applied before first paint so a pinned theme does not flash */
+try { var t = localStorage.getItem('reckon.theme'); if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t; } catch (e) {}
+</script>
 </head>
 <body>
 
@@ -15,26 +19,26 @@
     <h1>reck<i>o</i>n</h1>
     <span class="sub" id="machine-sub">reading…</span>
   </div>
-  <nav id="tabs">
-    <button data-tab="overview" aria-selected="true">Overview<span class="count" id="count-overview"></span></button>
-    <button data-tab="memory" aria-selected="false">Memory</button>
-    <button data-tab="pressure" aria-selected="false">Pressure<span class="count" id="count-pressure"></span></button>
-    <button data-tab="disk" aria-selected="false">Disk</button>
-    <button data-tab="internet" aria-selected="false">Internet<span class="count" id="count-internet"></span></button>
-    <button data-tab="checks" aria-selected="false">Checks<span class="count" id="count-checks"></span></button>
+  <nav id="tabs" role="tablist" aria-label="Sections">
+    <button role="tab" id="tabbtn-overview" aria-controls="tab-overview" data-tab="overview" aria-selected="true" tabindex="0">Overview<span class="count" id="count-overview"></span></button>
+    <button role="tab" id="tabbtn-memory" aria-controls="tab-memory" data-tab="memory" aria-selected="false" tabindex="-1">Memory</button>
+    <button role="tab" id="tabbtn-pressure" aria-controls="tab-pressure" data-tab="pressure" aria-selected="false" tabindex="-1">Pressure<span class="count" id="count-pressure"></span></button>
+    <button role="tab" id="tabbtn-disk" aria-controls="tab-disk" data-tab="disk" aria-selected="false" tabindex="-1">Disk</button>
+    <button role="tab" id="tabbtn-internet" aria-controls="tab-internet" data-tab="internet" aria-selected="false" tabindex="-1">Internet<span class="count" id="count-internet"></span></button>
+    <button role="tab" id="tabbtn-checks" aria-controls="tab-checks" data-tab="checks" aria-selected="false" tabindex="-1">Checks<span class="count" id="count-checks"></span></button>
     <span class="spacer"></span>
-    <button data-tab="dns" aria-selected="false" class="risky">DNS</button>
+    <button role="tab" id="tabbtn-dns" aria-controls="tab-dns" data-tab="dns" aria-selected="false" tabindex="-1" class="risky">DNS</button>
   </nav>
 </header>
 
 <main>
-  <section id="tab-overview"></section>
-  <section id="tab-memory" hidden></section>
-  <section id="tab-pressure" hidden></section>
-  <section id="tab-disk" hidden></section>
-  <section id="tab-internet" hidden></section>
-  <section id="tab-checks" hidden></section>
-  <section id="tab-dns" hidden></section>
+  <section id="tab-overview" role="tabpanel" aria-labelledby="tabbtn-overview"></section>
+  <section id="tab-memory" role="tabpanel" aria-labelledby="tabbtn-memory" hidden></section>
+  <section id="tab-pressure" role="tabpanel" aria-labelledby="tabbtn-pressure" hidden></section>
+  <section id="tab-disk" role="tabpanel" aria-labelledby="tabbtn-disk" hidden></section>
+  <section id="tab-internet" role="tabpanel" aria-labelledby="tabbtn-internet" hidden></section>
+  <section id="tab-checks" role="tabpanel" aria-labelledby="tabbtn-checks" hidden></section>
+  <section id="tab-dns" role="tabpanel" aria-labelledby="tabbtn-dns" hidden></section>
 </main>
 
 <footer>
@@ -42,6 +46,8 @@
   <span>cpu <b id="self-cpu">—</b></span>
   <span id="self-policy">collects on demand · no polling</span>
   <span class="balance" id="balance"></span>
+  <a href="/pet" class="footlink">pet preview</a>
+  <button type="button" id="theme" class="footbtn" aria-label="Colour theme">theme: auto</button>
 </footer>
 
 <script src="/charts.js"></script>

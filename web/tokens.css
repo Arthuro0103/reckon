@@ -68,6 +68,93 @@
      project, because status is carried by position and label instead. */
   --edge: #e0a04a;
 
+  /* text ON a filled surface: on the accent button, and inside the series bars */
+  --on-cyan:   #04141c;
+  --on-series: #05131c;
+
   --mono: ui-monospace, "SF Mono", Menlo, monospace;
   --sans: ui-sans-serif, -apple-system, "Inter", system-ui, sans-serif;
+}
+
+/* ---------------------------------------------------------------------------
+   Light theme. `auto` follows the system; the toggle in the footer pins one with
+   data-theme on <html>. The same block is written twice because CSS has no way
+   to share one block between a media query and an attribute selector; the
+   checks hold the two copies identical.
+--------------------------------------------------------------------------- */
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    color-scheme: light;
+
+    --bg:     #f3f7f9;
+    --bg2:    #ffffff;   /* card surface = the chart surface (gaps and rings in the charts) */
+    --bg3:    #e4edf2;
+    --bg4:    #d5e2ea;
+
+    --ink:    #0b1a26;   /* 17.7:1 on --bg2 */
+    --ink2:   #3b5262;   /*  8.2:1 */
+    --ink3:   #51697a;   /*  5.8:1 — the floor for normal body text */
+    --line:   #d3e0e8;
+    --line2:  #a9bfcc;
+
+    --cyan:   #0a6f82;   /*  5.8:1 — interface accent, as text and as a fill */
+    --cyan-d: #19a2b8;
+    --cyan-v: #0a6f821a;
+
+    /* the series keep their hues and their order: that is the colour-vision safety.
+       Each is at least 3:1 against the white card. */
+
+    --q1: #74c6d5;
+    --q2: #43b4c9;
+    --q3: #19a2b8;
+    --q4: #1c8ca5;
+    --q5: #19758c;
+    --q6: #1a6073;
+
+    /* emphasis neutrals: on a light surface the prominent one is the DARKER */
+    --n1: #6c8ea2;
+    --n2: #9db6c6;
+    --n3: #c2d2dc;
+
+    --edge: #8a5410;   /* 6.3:1 */
+    --on-cyan:   #ffffff;
+    --on-series: #05131c;
+  }
+}
+:root[data-theme="light"] {
+  color-scheme: light;
+
+  --bg:     #f3f7f9;
+  --bg2:    #ffffff;   /* card surface = the chart surface (gaps and rings in the charts) */
+  --bg3:    #e4edf2;
+  --bg4:    #d5e2ea;
+
+  --ink:    #0b1a26;   /* 17.7:1 on --bg2 */
+  --ink2:   #3b5262;   /*  8.2:1 */
+  --ink3:   #51697a;   /*  5.8:1 — the floor for normal body text */
+  --line:   #d3e0e8;
+  --line2:  #a9bfcc;
+
+  --cyan:   #0a6f82;   /*  5.8:1 — interface accent, as text and as a fill */
+  --cyan-d: #19a2b8;
+  --cyan-v: #0a6f821a;
+
+  /* the series keep their hues and their order: that is the colour-vision safety.
+     Each is at least 3:1 against the white card. */
+
+  --q1: #74c6d5;
+  --q2: #43b4c9;
+  --q3: #19a2b8;
+  --q4: #1c8ca5;
+  --q5: #19758c;
+  --q6: #1a6073;
+
+  /* emphasis neutrals: on a light surface the prominent one is the DARKER */
+  --n1: #6c8ea2;
+  --n2: #9db6c6;
+  --n3: #c2d2dc;
+
+  --edge: #8a5410;   /* 6.3:1 */
+  --on-cyan:   #ffffff;
+  --on-series: #05131c;
 }

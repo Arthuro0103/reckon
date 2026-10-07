@@ -231,6 +231,108 @@ function platformContract() {
   }
 }
 
+
+// 6c. Polish: a light theme that keeps the colour rules, tabs a keyboard can use, a visible
+//     focus, folds and filters that survive a blocked localStorage, and `--open` that opens
+//     nothing but the panel's own loopback address.
+async function polish() {
+  const tokens = read('web/tokens.css'), style = read('web/style.css'), html = read('web/index.html'), app = read('web/app.js');
+
+  // --- the light token set
+  const body = (re) => (tokens.match(re) || [])[1];
+  const dark = body(/\n:root \{([\s\S]*?)\n\}/);
+  const auto = body(/@media \(prefers-color-scheme: light\) \{\s*:root:not\(\[data-theme="dark"\]\) \{([\s\S]*?)\n  \}\n\}/);
+  const pinned = body(/:root\[data-theme="light"\] \{([\s\S]*?)\n\}/);
+  if (!dark || !auto || !pinned) return fail('tokens.css lacks the dark set, the prefers-color-scheme light set or the data-theme="light" set');
+  const defs = (b) => Object.fromEntries([...b.matchAll(/^\s*(--[a-z0-9-]+):\s*(#[0-9a-fA-F]{6,8})\b/gm)].map((m) => [m[1], m[2].toLowerCase()]));
+  const D = defs(dark), A = defs(auto), P = defs(pinned);
+  if (JSON.stringify(A) === JSON.stringify(P)) ok('the light set under prefers-color-scheme and under data-theme="light" are the same');
+  else fail('the two copies of the light tokens differ');
+  if (/color-scheme:\s*dark/.test(dark) && /color-scheme:\s*light/.test(auto) && /color-scheme:\s*light/.test(pinned)) ok('each set declares its color-scheme');
+  else fail('a token set does not declare its color-scheme');
+  // Every colour token the dark set defines is either redefined for light or deliberately shared.
+  const SHARED = new Set(['--s1', '--s2', '--s3', '--s4', '--s5', '--s6', '--s7', '--s8', '--cyan-d', '--on-series']);
+  const unthemed = Object.keys(D).filter((k) => !(k in P) && !SHARED.has(k));
+  if (unthemed.length) fail('tokens with a dark value and no light value', unthemed.join(', '));
+  else ok('every surface, ink and accent token has a light value');
+  if (!/--s1:/.test(light(auto)) && Object.keys(P).every((k) => !/^--s[1-8]$/.test(k))) ok('the eight series keep their hues and their order in both themes');
+  else fail('the series colours were redefined for light: the colour-vision validation no longer covers them');
+
+  const lum = (hx) => { const c = [1, 3, 5].map((i) => parseInt(hx.slice(i, i + 2), 16) / 255).map((v) => (v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4)); return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]; };
+  const ratio = (a, b) => { const x = lum(a), y = lum(b); return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05); };
+  for (const [name, T] of [['dark', { ...D }], ['light', { ...D, ...P }]]) {
+    const bad = [];
+    for (const surf of ['--bg', '--bg2']) {
+      for (const [k, min] of [['--ink', 7], ['--ink2', 4.5], ['--ink3', 4.5], ['--cyan', 4.5], ['--edge', 4.5]])
+        if (ratio(T[k], T[surf]) < min) bad.push(`${k} on ${surf} ${ratio(T[k], T[surf]).toFixed(2)}`);
+      for (let i = 1; i <= 8; i++) if (ratio(T['--s' + i], T['--bg2']) < 3) bad.push(`--s${i} on ${surf === '--bg2' ? 'card' : surf} ${ratio(T['--s' + i], T['--bg2']).toFixed(2)}`);
+    }
+    if (ratio(T['--on-cyan'], T['--cyan']) < 4.5) bad.push('--on-cyan on --cyan ' + ratio(T['--on-cyan'], T['--cyan']).toFixed(2));
+    // the sequential ramp stays monotone in lightness
+    const L = [1, 2, 3, 4, 5, 6].map((i) => lum(T['--q' + i]));
+    if (!L.every((v, i) => i === 0 || (name === 'dark' ? v < L[i - 1] : v < L[i - 1]))) bad.push('the q ramp is not monotone');
+    if (bad.length) fail(`the ${name} theme fails contrast`, [...new Set(bad)].join('; '));
+    else ok(`the ${name} theme: ink at least 4.5:1, series at least 3:1 on the card, text on the accent readable, ramp monotone`);
+  }
+  if (!/#[0-9a-fA-F]{6}\b/.test(style.replace(/\/\*[\s\S]*?\*\//g, '').replace(/#(?:00000073)\b/g, ''))) ok('style.css holds no raw colour that would ignore the theme');
+  else fail('style.css has a raw hex colour that will not follow the theme');
+  if (/const SUP = 'var\(--bg2\)'/.test(read('web/charts.js'))) ok('the chart rings and gaps follow the card surface');
+  else fail('web/charts.js paints its rings with a fixed colour');
+
+  // --- tabs
+  const tabs = [...html.matchAll(/<button[^>]*data-tab="(\w+)"[^>]*>/g)].map((m) => m[0]);
+  if (/<nav id="tabs" role="tablist"/.test(html) && tabs.length >= 7 && tabs.every((b) => /role="tab"/.test(b) && /aria-controls="tab-\w+"/.test(b) && /aria-selected="(true|false)"/.test(b)))
+    ok(`all ${tabs.length} tabs are role="tab" with aria-controls and aria-selected, in a role="tablist"`);
+  else fail('the tabs are not a complete tablist in web/index.html');
+  if ([...html.matchAll(/<section id="tab-(\w+)"/g)].every((m) => new RegExp(`id="tab-${m[1]}" role="tabpanel"`).test(html))) ok('every panel is a role="tabpanel"');
+  else fail('a panel is not a role="tabpanel"');
+  if (/ArrowRight/.test(app) && /ArrowLeft/.test(app) && /Home/.test(app) && /End/.test(app) && /setAttribute\('aria-selected'/.test(app)) ok('arrow keys, Home and End move between tabs, and aria-selected is kept');
+  else fail('web/app.js has no arrow-key, Home and End navigation on the tabs');
+
+  // --- focus
+  const bare = style.split('\n').filter((l) => /outline:\s*(none|0)\b/.test(l.replace(/\/\*.*?\*\//g, '')));
+  if (/:focus-visible\s*\{[^}]*outline:\s*2px solid/.test(style)) ok('there is a visible :focus-visible outline');
+  else fail('web/style.css has no visible :focus-visible outline');
+  if (!bare.length) ok('no rule removes the focus outline (the add-domain field keeps it)');
+  else fail('a rule removes the focus outline', bare.join(' | '));
+
+  // --- folds, filter, storage, footer
+  if (/function fold\(/.test(app) && /createElement|el\('details'/.test(app) && /function kindFilter\(/.test(app) && /kindLabel/.test(app)) ok('the Overview lists fold, and the decisions filter by kind with a count');
+  else fail('the Overview folds or the kind filter are missing');
+  const raw = [...(app + html).matchAll(/localStorage/g)].length;
+  const guarded = [...(app + html).matchAll(/try \{[^}]*localStorage[^}]*\}\s*catch/g)].length;
+  if (raw > 0 && raw === guarded) ok('every localStorage access is inside try/catch');
+  else fail('a localStorage access is not wrapped in try/catch', `${raw} uses, ${guarded} guarded`);
+  if (/<footer>[\s\S]*<a href="\/pet"[\s\S]*<\/footer>/.test(html)) ok('the footer links the /pet preview');
+  else fail('the footer does not link /pet');
+
+  // --- --open
+  const darwin = require(path.join(ROOT, 'lib/platform/darwin.js'));
+  for (const bad of ['https://example.com/', 'http://127.0.0.1:4128/../../etc', 'http://localhost:4127/', 'file:///etc/passwd', 'http://127.0.0.1:4127@evil.com/', 'http://127.0.0.1:4127/x;rm -rf ~', '-a Calculator', 'http://0.0.0.0:4127/']) {
+    try { await darwin.openBrowser(bad); fail('openBrowser accepted an address that is not the panel\'s own', bad); return; }
+    catch (e) { if (!(e instanceof TypeError)) throw e; }
+  }
+  ok('openBrowser throws on anything that is not http://127.0.0.1:<port>/');
+  const dsrc = read('lib/platform/darwin.js');
+  if (/run\('open', \[String\(url\)\]/.test(dsrc) && !/openBrowser[\s\S]{0,400}(shell|exec\()/.test(dsrc.slice(dsrc.indexOf('async function openBrowser'), dsrc.indexOf('async function openBrowser') + 500))) ok('openBrowser runs `open` with a fixed argv and no shell');
+  else fail('openBrowser does not run `open` with a fixed argv');
+  const platform = require(path.join(ROOT, 'lib/platform')), real = platform.openBrowser, seen = [], lines = [];
+  platform.openBrowser = async (u) => { seen.push(u); if (!/^http:\/\/127\.0\.0\.1:\d+\/$/.test(u)) throw new TypeError('nope'); return true; };
+  try {
+    const { openPanel } = require(path.join(ROOT, 'lib/openpanel.js'));
+    await openPanel('http://127.0.0.1:4127/', (l) => lines.push(l));
+    await openPanel('https://example.com/', (l) => lines.push(l));
+    if (seen.length === 2 && lines.length === 1 && /nope/.test(lines[0])) ok('--open passes the loopback address to the seam and reports a refusal instead of crashing');
+    else fail('openPanel did not behave', JSON.stringify({ seen, lines }));
+  } finally { platform.openBrowser = real; }
+  const srv = read('server.js'), bin = read('bin/reckon');
+  if (/process\.argv\.includes\('--open'\)/.test(srv) && /openPanel\(`http:\/\/127\.0\.0\.1:\$\{PORT\}\/`\)/.test(srv)) ok('server.js opens only its own loopback address, and only with --open');
+  else fail('server.js does not guard --open to its loopback address');
+  if (/else require\('\.\.\/server\.js'\)/.test(bin)) ok('`reckon --open` reaches the server');
+  else fail('bin/reckon no longer starts the server by default');
+}
+function light(b) { return b; }
+
 // 7. The blocklist sieve: anything that gets past it becomes a line in /etc/hosts.
 function blocklistSieve() {
   const { cleanDomain } = require(path.join(ROOT, 'lib/blocklist.js'));
@@ -2099,6 +2201,7 @@ async function openOnly() {
   await step('contracts', async () => { await contracts(); });
   await step('css', async () => { await css(); });
   await step('dns', async () => { await dnsRecipe(); });
+  await step('polish', async () => { await polish(); });
   await step('platform', async () => { await platformContract(); });
   await step('blocklist', async () => { await blocklistSieve(); });
   await step('targets', async () => { await targetLists(); });
