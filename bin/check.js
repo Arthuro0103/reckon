@@ -528,6 +528,18 @@ function crossPlatformRender() {
   else fail("the front end hardcodes 'macOS (system)'", `${hard.length} occurrence(s) — a Windows machine labels it 'Windows (system)'`);
 }
 
+/* `draw` is a local of the init function, not a global: a top-level function that
+   calls it throws ReferenceError after the work is done. sendBlocklist did, and
+   redrew the wrong tab. Every top-level function in app.js must stay off it. */
+function noStrayDraw() {
+  const app = read('web/app.js');
+  const body = (app.match(/async function sendBlocklist[\s\S]*?\n}\n/) || [''])[0];
+  if (!body) fail('sendBlocklist is missing from web/app.js');
+  else if (/\bdraw\(/.test(body)) fail('sendBlocklist calls draw(), which is not in scope there');
+  else if (!/\bdns\(state\.dns\)/.test(body)) fail('sendBlocklist does not redraw the DNS tab');
+  else ok('sendBlocklist redraws the DNS tab without the out-of-scope draw()');
+}
+
 /* Grouping ten cache folders into one row is a readability win that can hide a
    warning, which would make it a safety loss. These assert the merge keeps
    every guard it inherited, and that a merged number still shows its parts. */
@@ -1698,6 +1710,7 @@ async function step(name, fn) {
   await step('watch', async () => { await watchDecides(); });
   await step('corner', async () => { await cornerIsSafe(); });
   await step('agent skills', async () => { await agentSkills(); });
+  await step('stray draw', async () => { noStrayDraw(); });
   if (!process.env.RECKON_CHECK_CHILD) await step('other platforms', asUnsupportedPlatform);
   console.log(failures ? `\n${failures} FAILURE(S)\n` : '\nall checks passed\n');
   process.exit(failures ? 1 : 0);

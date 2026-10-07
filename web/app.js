@@ -506,7 +506,9 @@ function memory(d) {
     { name: 'Free', value: g.free / 1073741824, color: 'var(--line2)' },
   ];
   const hist = d.history || [];
-  const swapPct = m.swap ? Math.round((m.swap.usedMB / m.swap.totalMB) * 100) : 0;
+  // Swap is measured against this machine's RAM, like lib/watch.js: the swap file's
+  // own size is a number macOS changes on demand, so a share of it says little.
+  const swapPct = m.swap ? Math.min(100, Math.round((m.swap.usedMB / (m.totalBytes / 1048576)) * 100)) : 0;
 
   root.append(grid(
     at('c8', chartGroups(m, base)),
@@ -559,7 +561,7 @@ function memory(d) {
         shape: areaChart({ vals: hist.map((x) => x.vm.compressed / 1073741824), rot: 'Compressed', unit: 'GB', color: 'var(--s2)' }),
         table: tableOf(['Reading', 'GB'], hist.map((x, i) => [i + 1, gb(x.vm.compressed / 1073741824)])) })),
       at('c4', card({ title: 'Swap used', sub: m.swap ? `${gb(m.swap.usedMB / 1024)} GB of ${gb(m.swap.totalMB / 1024)} GB` : '—',
-        shape: gauge({ pct: swapPct, center: swapPct + '%', sub: 'of swap in use' }) })),
+        shape: gauge({ pct: swapPct, center: swapPct + '%', sub: 'of RAM, held in swap' }) })),
     ));
   }
 
@@ -736,14 +738,19 @@ function checks(c) {
     el('p', { class: 'summary' }, 'Nothing gets a row here unless it has a fix. A diagnosis with no action is noise.')));
 
   const v = c.volume, m = c.memory;
-  const diskPct = Math.round((v.usedKB / (v.usedKB + v.freeKB)) * 100);
-  const swapPct = m.swap ? Math.round((m.swap.usedMB / m.swap.totalMB) * 100) : 0;
+  // volumeUsage() is null when the platform cannot read it (see chartSteps).
+  const diskPct = v ? Math.round((v.usedKB / (v.usedKB + v.freeKB)) * 100) : null;
+  // Swap against RAM, as lib/watch.js does, so this gauge agrees with the watcher.
+  const swapPct = m.swap ? Math.min(100, Math.round((m.swap.usedMB / (m.totalBytes / 1048576)) * 100)) : 0;
   const memPct = Math.round(((m.vm.active + m.vm.wired + m.vm.compressed) / m.totalBytes) * 100);
   root.append(grid(
-    at('c4', card({ title: 'Disk used', sub: `${gb(kb2gb(v.freeKB))} GB free`,
-      shape: gauge({ pct: diskPct, center: diskPct + '%', sub: 'of the data volume' }) })),
+    at('c4', v
+      ? card({ title: 'Disk used', sub: `${gb(kb2gb(v.freeKB))} GB free`,
+        shape: gauge({ pct: diskPct, center: diskPct + '%', sub: 'of the data volume' }) })
+      : card({ title: 'Disk used', sub: 'Could not read how full this volume is.',
+        shape: el('p', { class: 'empty' }, 'no reading') })),
     at('c4', card({ title: 'Swap used', sub: 'Disk standing in for RAM.',
-      shape: gauge({ pct: swapPct, center: swapPct + '%', sub: 'of reserved swap' }) })),
+      shape: gauge({ pct: swapPct, center: swapPct + '%', sub: 'of RAM, held in swap' }) })),
     at('c4', card({ title: 'RAM committed', sub: 'Wired, active and compressed — what is not available right now.',
       shape: gauge({ pct: memPct, center: memPct + '%', sub: 'of total RAM' }) })),
   ));
@@ -990,7 +997,13 @@ function internet(d) {
         el('div', {}, el('p', { class: 'title' }, f.title))));
       c.append(el('div', { class: 'proof' }, f.found));
       c.append(el('div', { class: 'lose' }, el('b', {}, 'Measured by: '), f.measure));
-      if (f.fix) c.append(el('div', { class: 'lose' }, el('b', {}, 'Fix: '), f.fix));
+      if (f.fix) {
+        // Prose stays a sentence; a command (multi-line, or starting with one) gets
+        // the copy block, like the Checks tab. The panel still runs nothing.
+        const isCmd = f.fix.includes('\n') || /^(#|sudo |networksetup |dscacheutil |killall |tmutil |defaults )/.test(f.fix);
+        if (isCmd) c.append(el('div', { class: 'lose' }, el('b', {}, 'Fix:')), commandBlock(f.fix, 'paste it yourself. this panel does not execute.'));
+        else c.append(el('div', { class: 'lose' }, el('b', {}, 'Fix: '), f.fix));
+      }
       if (f.cost) c.append(el('div', { class: 'lose' }, el('b', {}, 'Cost of acting: '), f.cost));
       root.append(c);
     }
@@ -1098,9 +1111,16 @@ function radioSection(d) {
 
   const run = el('button', { class: 'copy', style: 'margin-top:12px' }, r ? 'read it again' : 'read the radio');
   run.addEventListener('click', async () => {
-    run.replaceWith(el('span', { class: 'loading' }, 'asking the Wi-Fi card — twelve seconds'));
+    const wait = el('span', { class: 'loading' }, 'asking the Wi-Fi card — twelve seconds');
+    run.replaceWith(wait);
     const out = await postNetwork('/api/network/radio');
-    if (out) { state.network = out; internet(out); }
+    if (out && !out.error) { state.network = out; internet(out); return; }
+    // Failure or a reading already in flight: say so and give the button back.
+    const msg = el('span', { class: 'note' }, postNetwork.alreadyRunning
+      ? 'a radio reading is already running. wait for it, then open this tab again.'
+      : 'the request failed. nothing was read.');
+    wait.replaceWith(msg);
+    msg.after(run);
   });
   box.append(run);
 
@@ -1157,9 +1177,10 @@ async function postNetwork(route) {
   try {
     const res = await fetch(route, { method: 'POST', headers: authed() });
     const out = await res.json();
-    if (out && out.alreadyRunning) return null;
+    postNetwork.alreadyRunning = !!(out && out.alreadyRunning);
+    if (postNetwork.alreadyRunning) return null;
     return out;
-  } catch { return null; }
+  } catch { postNetwork.alreadyRunning = false; return null; }
 }
 
 async function loadNetwork(force) {
@@ -1217,8 +1238,18 @@ function dns(d) {
     c.append(el('div', { class: 'blocks' }, el('b', {}, 'Blocks: '), p.blocks));
     c.append(el('div', { class: 'note' }, p.note));
     const open = el('button', { class: 'copy', style: 'margin-top:11px', onclick: async () => {
+      let r;
+      try {
+        r = await get(`/api/dns/recipe?service=${encodeURIComponent(wifi.service)}&provider=${p.id}&current=${current.join(',')}`);
+        if (!r || r.error) throw new Error(r && r.error ? r.error : 'no answer');
+      } catch (e) {
+        // The button stays, with the reason beside it, so it can be pressed again.
+        c.querySelector('[data-recipe-error]')?.remove();
+        open.after(el('span', { class: 'note', 'data-recipe-error': '1', style: 'margin-left:10px' }, 'could not build the commands: ' + e.message));
+        return;
+      }
+      c.querySelector('[data-recipe-error]')?.remove();
       open.remove();
-      const r = await get(`/api/dns/recipe?service=${encodeURIComponent(wifi.service)}&provider=${p.id}&current=${current.join(',')}`);
       // THE UNDO COMES FIRST. On purpose: if DNS breaks, you cannot search for
       // how to fix it.
       c.append(
@@ -1411,7 +1442,7 @@ async function sendBlocklist(route, body, after) {
     if (!r.ok) { if (after) after(d); return; }
     state.blocklist = d;
     if (after) after(null);
-    if (state.network) draw('internet', internet, state.network);
+    if (state.dns) dns(state.dns);
   } catch (e) { if (after) after({ error: e.message }); }
 }
 
