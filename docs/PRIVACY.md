@@ -66,6 +66,11 @@ no accounts, no API keys, and no server it talks to except itself.
   - **The command line of an orphaned process** (parent gone, older than an hour), to recognise an
     MCP server, `npx`, `uvx` or a language server. It is matched in memory and dropped: only a
     tool name (`mcp-server-filesystem`) reaches the screen, and nothing of it is stored.
+  - **The command lines of an idle AI session's child processes** (every descendant, at any
+    depth), only for a session that is already a candidate, to prove each one is an idle MCP or
+    tool server of its own. Matched in memory and dropped the same way: a recognised child shows
+    only its tool name, and a child that is not recognised (a shell, `git`, a build) is named on
+    screen by its executable's name alone (`zsh`, `git`), never by its arguments.
   - **Which models Ollama has loaded**, when an Ollama process is running: one `GET` to
     `http://127.0.0.1:11434/api/ps`, the loopback address Ollama itself listens on. The address is
     a constant in the code, never read from a setting or an environment variable; no redirect is

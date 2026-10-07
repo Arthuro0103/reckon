@@ -37,7 +37,9 @@ still ends as text. What an action must have, or the pull request is declined:
   command in the request body is ignored. A target that changed is refused.
 - **Only `high` and `medium` rows.** A `low` row stays copy-only.
 - **An AI session is ended only when idleness is measured, never guessed** (lib/aitools.js). Never
-  reckon itself, anything it runs inside, a session on its terminal, or one with a live child.
+  reckon itself, anything it runs inside, a session on its terminal, or one with a live child
+  that is not its own idle MCP / tool server (owner's decision, 2026-10-07: every descendant is
+  checked by `onlyToolChildren()`, and a refusal names a process by its command name only).
   "Cannot judge" (no terminal, no working folder, no transcript) is no button. A transcript is
   known by its modification time only: a change that opens one is declined.
 - **Before and after.** The machine is measured again after the command, and one line goes

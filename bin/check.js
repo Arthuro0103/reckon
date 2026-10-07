@@ -2828,7 +2828,7 @@ async function aiActions(act) {
     ttyTouchedAt: async (t) => { reads.ttys.push(t); return TTY[t] ?? null; },
     cwdOf: async (pid) => { reads.cwds.push(pid); return CWD[pid] ?? null; },
     newestTranscript: async (dir) => { reads.dirs.push(dir); return TR.get(dir) || null; },
-    argsOf: async (pids) => Object.fromEntries(pids.filter((p) => ARGS[p]).map((p) => [p, ARGS[p]])),
+    argsOf: async (pids) => (ARGS == null ? null : Object.fromEntries(pids.filter((p) => ARGS[p]).map((p) => [p, ARGS[p]]))),
     ports: async () => PORTS,
     ollamaLoaded: async () => null,
     which: () => null,
@@ -2929,6 +2929,143 @@ async function aiActions(act) {
   if (!act.ACTIONS['end-ai-session'].follows && !Object.values(act.ACTIONS).some((a) => a.follows === 'end-ai-session' || a.follows === 'stop-orphan-tools')
     && act.ACTIONS['kill-processes'].follows === 'term-processes') ok('an AI session or a tool server is only ever sent SIGTERM: no forced stop follows either action');
   else fail('a forced stop can follow an AI action');
+
+  // --- 1b. a session whose only children are its own idle MCP / tool servers --
+  // Owner's decision of 2026-10-07: those children no longer block the button.
+  // Anything else anywhere in the tree still does, and is named by its command
+  // name only. Every bad case below is planted and must refuse.
+  const SECRET = 's3cr3t-token-42';
+  const MCP_ARGS = {
+    1021: 'npm exec @modelcontextprotocol/server-github',
+    1022: 'sh -c mcp-server-github',
+    1023: `node ${HOME}/.npm/_npx/ab/node_modules/.bin/mcp-server-github`,
+    1024: '/opt/homebrew/bin/typescript-language-server --stdio',
+    1025: `node ${HOME}/.npm/_npx/9f/node_modules/.bin/mcp-server-filesystem ${HOME}/secret-folder`,
+  };
+  TTY.ttys021 = NOW - 3 * H * 1000; TTY.ttys031 = NOW - 3 * H * 1000;
+  CWD[1020] = `${HOME}/www/p20`; CWD[1031] = `${HOME}/www/p31`;
+  transcript(CWD[1020], NOW - 3 * H * 1000);
+  const mcpTree = ({ extra = [], args = {}, ports = [], tweak = null } = {}) => {
+    resetProcs();
+    procs.push(P(4020, 400, '/bin/zsh', 9 * H, 'ttys021'), P(1020, 4020, CLAUDE, 8 * H, 'ttys021'),
+      P(1021, 1020, '/usr/local/bin/node', 7 * H, 'ttys021'), P(1022, 1021, '/bin/sh', 7 * H, 'ttys021'),
+      P(1023, 1022, '/usr/local/bin/node', 7 * H, 'ttys021'), P(1024, 1020, '/opt/homebrew/bin/typescript-language-server', 7 * H, 'ttys021'),
+      P(1025, 1020, '/usr/local/bin/node', 7 * H, 'ttys021'), ...extra);
+    if (tweak) tweak();
+    ARGS = args === null ? null : { ...MCP_ARGS, ...args };
+    PORTS = ports;
+  };
+  const row1020 = async () => (await ai.idleSessions(procs, probe, 777)).find((r) => r.id === 'ai-session-1020') || null;
+  const refusedRow = (r, re) => !!r && !r.action && r.confidence === 'low' && re.test(r.proof) && !r.proof.includes(SECRET) && !r.proof.includes('secret-folder');
+
+  mcpTree();
+  const clean = await row1020();
+  const cleanJson = JSON.stringify(clean || {});
+  if (clean && clean.action && clean.confidence === 'medium' && /Its only child processes are its own tool servers: 5 tool server processes belong to this session/.test(clean.proof)
+    && ['mcp-server-github', 'typescript-language-server', 'mcp-server-filesystem'].every((n) => clean.proof.includes(n))
+    && /5 tool server processes belong to this session/.test(clean.lose) && /orphaned tool servers row/.test(clean.lose) && clean.lose.includes(`cd '${HOME}/www/p20' && claude --resume`)
+    && !cleanJson.includes('secret-folder') && !cleanJson.includes('.npm/_npx')) ok('a session whose whole tree is idle MCP / tool servers (npm exec -> sh -c -> node, a language server, an npx server) gets a button; its proof and lose name the 5 tool servers, keep the resume command, and carry no command line');
+  else fail('a session with only idle tool-server children was not offered as it should be', cleanJson.slice(0, 400));
+  e = make(); e.remember('pressure', [clean]);
+  const pm = clean && await e.preview({ action: 'end-ai-session', id: 'ai-session-1020' });
+  const rm = pm && pm.ok && await e.run({ action: 'end-ai-session', id: 'ai-session-1020', nonce: pm.nonce });
+  if (pm && pm.ok && /not its tool servers/.test(pm.what) && /5 tool server processes belong to this session/.test(pm.what) && /same 5 tool server process/.test(pm.proof)
+    && /claude --resume/.test(pm.undo) && rm && rm.dryRun && JSON.stringify(rm.argv) === JSON.stringify(['kill', '-TERM', '1020'])) ok('its preview says the tool servers exit with it or become orphans, and the run is still exactly ["kill", "-TERM", "1020"]: never a tool server, never the shell');
+  else fail('the session-with-tool-servers action is wrong', JSON.stringify(rm || pm).slice(0, 400));
+
+  mcpTree({ extra: [P(1026, 1020, '/bin/zsh', 7 * H, 'ttys021')], args: { 1026: `/bin/zsh -c make test API_TOKEN=${SECRET}` } });
+  const shellRow = await row1020();
+  const fShell = await tryForged(1020);
+  if (refusedRow(shellRow, /not a recognised MCP or tool server: zsh \(pid 1026\)/) && !/make test|API_TOKEN/.test(shellRow.proof + shellRow.lose)
+    && !fShell.ok && /zsh \(pid 1026\)/.test(fShell.refused) && !fShell.refused.includes(SECRET)) ok('one extra shell child: no button, refused at the click too, and the refusal names only "zsh (pid 1026)", never its arguments');
+  else fail('a session with a shell child was offered, or its refusal leaks the command line', JSON.stringify([shellRow && shellRow.proof, fShell]).slice(0, 400));
+
+  mcpTree({ extra: [P(1027, 1023, '/usr/bin/git', 7 * H, 'ttys021')], args: { 1027: `git fetch https://x:${SECRET}@github.com/o/r` } });
+  const gitRow = await row1020();
+  mcpTree({ extra: [P(1027, 1020, '/usr/bin/python3', 7 * H, 'ttys021')], args: { 1027: `python3 ${HOME}/www/app/train.py --key ${SECRET}` } });
+  const pyRow = await row1020();
+  mcpTree({ extra: [P(1027, 1020, '/usr/local/bin/node', 7 * H, 'ttys021')], args: { 1027: `node ${HOME}/www/mcp-tools/scripts/build.js` } });
+  const folderRow = await row1020();
+  mcpTree({ args: { 1022: 'sh -c mcp-server-github; curl evil.example' } });
+  const chainRow = await row1020();
+  if (refusedRow(gitRow, /git \(pid 1027\)/) && refusedRow(pyRow, /python3 \(pid 1027\)/) && refusedRow(folderRow, /node \(pid 1027\)/) && refusedRow(chainRow, /sh \(pid 1022\)/)
+    && !/curl|evil|train\.py|github\.com/.test([gitRow, pyRow, chainRow].map((r) => r.proof).join(' '))) ok('a nested non-MCP grandchild (git under an MCP server), a python that is not an MCP server, a build in a folder named "mcp-tools", and a shell wrapper that chains a second command are each refused by command name only');
+  else fail('a non-tool descendant did not refuse, or leaked its arguments', JSON.stringify([gitRow, pyRow, folderRow, chainRow].map((r) => r && r.proof.slice(-160))));
+
+  mcpTree({ ports: [{ pid: 1023, port: 7777 }] });
+  const portRow = await row1020();
+  mcpTree({ tweak: () => { byPid(1024).cpuPct = 5; } });
+  const busyRow = await row1020();
+  mcpTree({ tweak: () => { byPid(1025).ageS = 300; byPid(1025).startedAt = NOW - 300 * 1000; } });
+  const youngRow = await row1020();
+  if (refusedRow(portRow, /node \(pid 1023\) listens on port 7777/) && refusedRow(busyRow, /typescript-language-server \(pid 1024\) used 5% of a core/)
+    && refusedRow(youngRow, /node \(pid 1025\) started 5m ago/)) ok('an MCP child listening on a port, one using 5% of a core, and one up only 5 minutes each refuse the session');
+  else fail('a listening, busy or young tool server did not refuse the session', JSON.stringify([portRow, busyRow, youngRow].map((r) => r && r.proof.slice(-140))));
+
+  mcpTree({ args: null });
+  const noArgs = await row1020();
+  mcpTree({ ports: null });
+  const noPorts = await row1020();
+  mcpTree({ args: { 1024: '' } });
+  const oneArgs = await row1020();
+  mcpTree({ tweak: () => { delete byPid(1023).cpuPct; } });
+  const noCpu = await row1020();
+  mcpTree({ tweak: () => { byPid(1025).ageS = null; } });
+  const noAge = await row1020();
+  if ([noArgs, noPorts, oneArgs, noCpu, noAge].every((r) => refusedRow(r, /Cannot judge/))) ok('unmeasurable is refused ("cannot judge"): command lines unread, ports unread, one command line missing, CPU unread, age unread');
+  else fail('an unmeasurable tool-server tree was offered', JSON.stringify([noArgs, noPorts, oneArgs, noCpu, noAge].map((r) => r && `${r.confidence} ${r.proof.slice(-100)}`)));
+
+  // Between the preview and the click: the whole tree is judged again.
+  const treeBetween = async (change) => {
+    mcpTree();
+    const r0 = await row1020();
+    const x = make(); x.remember('pressure', [r0]);
+    const pv = await x.preview({ action: 'end-ai-session', id: 'ai-session-1020' });
+    change();
+    const rv = await x.run({ action: 'end-ai-session', id: 'ai-session-1020', nonce: pv.nonce });
+    return { pv, rv };
+  };
+  const tNew = await treeBetween(() => { procs.push(P(1028, 1020, '/usr/local/bin/node', 7 * H, 'ttys021')); ARGS[1028] = 'uvx mcp-server-fetch'; });
+  const tShell = await treeBetween(() => { procs.push(P(1029, 1023, '/bin/bash', 7 * H, 'ttys021')); ARGS[1029] = '/bin/bash'; });
+  const tSwap = await treeBetween(() => { byPid(1025).startedAt += 60000; });
+  const tGone = await treeBetween(() => { procs.splice(procs.indexOf(byPid(1024)), 1); });
+  const tPort = await treeBetween(() => { PORTS = [{ pid: 1022, port: 9000 }]; });
+  const tBusy = await treeBetween(() => { byPid(1021).cpuPct = 40; });
+  if (tNew.pv.ok && !tNew.rv.ok && /not the ones measured/.test(tNew.rv.refused) && !tShell.rv.ok && /bash \(pid 1029\)/.test(tShell.rv.refused)
+    && !tSwap.rv.ok && /not the ones measured/.test(tSwap.rv.refused) && !tGone.rv.ok && /not the ones measured/.test(tGone.rv.refused)
+    && !tPort.rv.ok && /listens on port 9000/.test(tPort.rv.refused) && !tBusy.rv.ok && /40% of a core/.test(tBusy.rv.refused)) ok('the tree is judged again at the click: a new tool server, a shell under an MCP server, a replaced, exited, listening or busy child each refuse the run');
+  else fail('a session whose tree changed after the preview was acted on', JSON.stringify([tNew, tShell, tSwap, tGone, tPort, tBusy].map((t) => t.rv.refused || t.rv.argv)));
+
+  // The pure function, on its own.
+  mcpTree();
+  const direct = ai.onlyToolChildren(1020, procs, { args: ARGS, ports: [] });
+  const viaSelf = ai.onlyToolChildren(1020, procs, { args: ARGS, ports: [], forbidden: new Set([1023]) });
+  const leaf = ai.onlyToolChildren(1001, procs, { args: null, ports: null });
+  if (direct.ok && direct.tools.map((t) => t.pid).join() === '1021,1022,1023,1024,1025' && !viaSelf.ok && /reckon itself/.test(viaSelf.why) && leaf.ok && !leaf.tools.length) ok('onlyToolChildren: the whole descendant tree, never a pid reckon runs as, and a session with no child needs no reading at all');
+  else fail('onlyToolChildren answers wrongly', JSON.stringify([direct, viaSelf, leaf]).slice(0, 300));
+  const shapes = {
+    'npx -y @upstash/context7-mcp@latest': true, 'uvx mcp-server-fetch': true, 'python3 -m mcp_server_git --repository /x': true,
+    'node /x/node_modules/typescript/lib/tsserver.js': true, '/opt/homebrew/bin/gopls': true, [`node ${HOME}/www/my-mcp-server/dist/index.js`]: true,
+    'node /usr/local/bin/npx -y @modelcontextprotocol/server-memory': true, 'sh -c mcp-server-x /tmp/dir': true,
+    'npx vite': false, 'npm run test': false, 'make': false, 'cargo build --release': false, '-zsh': false, '/bin/zsh': false,
+    'bash -c mcp-server-x && rm -rf ~': false, [`node ${HOME}/www/mcp-tools/scripts/build.js`]: false, 'python3 train.py': false, 'git status': false,
+    'node --inspect server.js': false, 'tsc --watch': false,
+  };
+  const wrong = Object.entries(shapes).filter(([l, want]) => ai.recognisedTool(l) !== want).map(([l]) => l);
+  if (!wrong.length) ok(`a live session's child is recognised by what runs, not by a folder name: ${Object.keys(shapes).length} command-line shapes classified as expected`);
+  else fail('a command line is classified wrongly as a tool server or not', wrong.join(' | '));
+  if (ai.commandName('npm exec @modelcontextprotocol/server-github --token abc') === 'npm' && ai.commandName('/usr/bin/git') === 'git'
+    && ai.commandName('/Applications/Google Chrome.app/Contents/MacOS/Google Chrome') === 'Google Chrome') ok('a refusal names a process by its executable\'s name only, even when the process rewrote its title with arguments');
+  else fail('commandName leaks more than a name', ai.commandName('npm exec @modelcontextprotocol/server-github --token abc'));
+
+  // Other tools stay copy-only, idle tool children or not.
+  resetProcs();
+  procs.push(P(4031, 400, '/bin/zsh', 9 * H, 'ttys031'), P(1031, 4031, '/opt/homebrew/bin/codex', 8 * H, 'ttys031'), P(1032, 1031, '/usr/local/bin/node', 7 * H, 'ttys031'));
+  ARGS = { 1032: 'npx -y @modelcontextprotocol/server-memory' }; PORTS = [];
+  const codexRow = (await ai.idleSessions(procs, probe, 777)).find((r) => r.id === 'ai-session-1031');
+  if (codexRow && !codexRow.action && codexRow.confidence === 'low' && /does not know where codex/.test(codexRow.proof)) ok('codex with only idle MCP children is still low and copy-only');
+  else fail('codex got a button', JSON.stringify(codexRow));
+  resetProcs(); ARGS = {}; PORTS = [];
 
   // --- 2. orphaned MCP / tool servers ---------------------------------------
   const base = procs.filter((p) => [400, 450, 500, 600, 777].includes(p.pid));
@@ -3121,21 +3258,22 @@ async function aiSandbox() {
     const ai = require(path.join(ROOT, 'lib/aitools.js'));
     const { createLog } = require(path.join(ROOT, 'lib/actlog.js'));
     const H = 3600, AGE = 7 * H;
-    const kids = [], mine = new Set(), TTYOF = new Map();
+    const kids = [], mine = new Set(), TTYOF = new Map(), spawnedPids = [];
     const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     async function list() {
-      const r = await run('ps', ['-o', 'pid=,ppid=,rss=,etime=,comm=', '-p', [process.pid, ...mine].join(',')], { timeout: 5000 });
+      const r = await run('ps', ['-o', 'pid=,ppid=,rss=,%cpu=,etime=,comm=', '-p', [process.pid, ...mine].join(',')], { timeout: 5000 });
       const out = [];
       for (const l of String(r.out || '').split('\\n')) {
-        const m = /^\\s*(\\d+)\\s+(\\d+)\\s+(\\d+)\\s+(\\S+)\\s+(.*)$/.exec(l);
+        const m = /^\\s*(\\d+)\\s+(\\d+)\\s+(\\d+)\\s+([\\d.]+)\\s+(\\S+)\\s+(.*)$/.exec(l);
         if (!m) continue;
-        if (+m[1] !== process.pid && (!mine.has(+m[1]) || +m[2] !== process.pid)) continue;
-        const t = /^(?:(\\d+)-)?(?:(\\d+):)?(\\d+):(\\d+)$/.exec(m[4]);
+        // Only this test and what it spawned: a child of the test, or a child of one of those.
+        if (+m[1] !== process.pid && (!mine.has(+m[1]) || (+m[2] !== process.pid && !mine.has(+m[2])))) continue;
+        const t = /^(?:(\\d+)-)?(?:(\\d+):)?(\\d+):(\\d+)$/.exec(m[5]);
         const ageS = t ? (+(t[1] || 0)) * 86400 + (+(t[2] || 0)) * 3600 + (+t[3]) * 60 + (+t[4]) : null;
         const own = mine.has(+m[1]);
         // A spawned child has no terminal and is seconds old: both are supplied, consistently, so
         // its start time (and so its identity) is the same in every reading.
-        out.push({ pid: +m[1], ppid: +m[2], rssKB: +m[3], ageS: own && ageS != null ? ageS + AGE : ageS, command: m[5].trim(), tty: own ? TTYOF.get(+m[1]) : null });
+        out.push({ pid: +m[1], ppid: +m[2], rssKB: +m[3], cpuPct: +m[4], ageS: own && ageS != null ? ageS + AGE : ageS, command: m[6].trim(), tty: own ? TTYOF.get(+m[1]) : null });
       }
       return out;
     }
@@ -3158,14 +3296,25 @@ async function aiSandbox() {
         };
         const tA = transcriptFor(projA), tB = transcriptFor(projB);
         res.inside = tA.dir.startsWith(home + path.sep) && tB.dir.startsWith(home + path.sep);
-        const a = spawn(binA, ['60'], { cwd: projA, stdio: 'ignore' });
+        // A fake MCP server too: a link to /bin/sleep named mcp-server-test. The fake claude A
+        // must be its parent, and sleep cannot spawn, so a shell starts the MCP child in the
+        // background and then becomes claude with exec (same pid, so A is the MCP's parent).
+        const mcpBin = path.join(mk(path.join(home, 'mcpbin')), 'mcp-server-test');
+        fs.symlinkSync('/bin/sleep', mcpBin);
+        const a = spawn('/bin/sh', ['-c', '"$1" 60 & exec "$2" 60', 'sh', mcpBin, binA], { cwd: projA, stdio: 'ignore' });
         const b = spawn(binB, ['60'], { cwd: projB, stdio: 'ignore' });
         for (const c of [a, b]) { kids.push(c); mine.add(c.pid); }
         TTYOF.set(a.pid, 'ttys990'); TTYOF.set(b.pid, 'ttys991');
         await sleep(400);
+        const pg = await run('pgrep', ['-P', String(a.pid)], { timeout: 5000 });
+        const mcpPids = String(pg.out || '').split('\\n').map((x) => +x.trim()).filter((x) => x > 1);
+        res.mcpPid = mcpPids.length === 1 ? mcpPids[0] : null;
+        for (const m of mcpPids) { mine.add(m); TTYOF.set(m, 'ttys990'); spawnedPids.push(m); }
+        // Command lines are read for real (ps -o args), but only for the test's own processes.
+        const realArgs = ai.defaultProbe().argsOf;
         const aiProbe = {
           ttyTouchedAt: async (t) => (t === 'ttys990' ? Date.now() - 3 * H * 1000 : t === 'ttys991' ? Date.now() - 60 * 1000 : null),
-          ports: async () => [], ollamaLoaded: async () => null, argsOf: async () => ({}), which: () => null,
+          ports: async () => [], ollamaLoaded: async () => null, argsOf: (pids) => realArgs(pids.filter((p) => mine.has(p))), which: () => null,
         };
         const rows = await ai.idleSessions(await list(), { ...ai.defaultProbe(), ...aiProbe }, process.pid);
         res.rows = rows.map((r) => r.id + ':' + r.confidence);
@@ -3174,6 +3323,8 @@ async function aiSandbox() {
         res.noSelf = !rows.some((r) => r.id === 'ai-session-' + process.pid);
         const rowA = rows.find((r) => r.id === 'ai-session-' + a.pid);
         res.resume = rowA && rowA.lose.includes("claude --resume");
+        res.mcpNamed = !!rowA && /1 tool server process belongs to this session \\(mcp-server-test\\)/.test(rowA.proof + ' ' + rowA.lose)
+          && !!rowA.target && rowA.target.tools.length === 1 && rowA.target.tools[0].pid === res.mcpPid;
         const e = act.createEngine({ processList: list, selfPid: process.pid, minDelayMs: 0, settleMs: 1500,
           memoryStats: async () => null, memoryPressure: async () => null, ai: aiProbe,
           log: createLog({ dir: path.join(home, '.cache', 'reckon') }) });
@@ -3190,12 +3341,24 @@ async function aiSandbox() {
         res.a = { ok: rA.ok, gone: rA.gone, ran: rA.ran, refused: rA.refused, pid: a.pid };
         await sleep(200);
         try { process.kill(b.pid, 0); res.bAlive = true; } catch { res.bAlive = false; }
+        // reckon signalled the claude only: its MCP child is still alive (orphaned now), and the
+        // test, not reckon, stops it below.
+        try { process.kill(res.mcpPid, 0); res.mcpAlive = true; } catch { res.mcpAlive = false; }
         res.untouched = fs.statSync(tA.f).mtimeMs === tA.mtime && fs.statSync(tB.f).mtimeMs === tB.mtime;
         let lines = [];
         try { lines = fs.readFileSync(path.join(home, '.cache', 'reckon', 'actions.log'), 'utf8').split('\\n').filter(Boolean).map((l) => JSON.parse(l)); } catch { /* reported below */ }
         res.logged = lines.some((l) => l.action === 'end-ai-session' && l.info && /claude --resume/.test(l.info.resume || ''));
       } catch (err) { res.error = String(err && err.stack || err).split('\\n').slice(0, 2).join(' | '); }
-      finally { for (const k of kids) { try { k.kill('SIGKILL'); } catch {} } }
+      finally {
+        for (const k of kids) { try { k.kill('SIGKILL'); } catch {} }
+        // The fake MCP child: stopped only if that pid is still the link this test made.
+        for (const p of spawnedPids) {
+          try {
+            const c = await run('ps', ['-o', 'comm=', '-p', String(p)], { timeout: 5000 });
+            if (String(c.out || '').trim().endsWith(path.join('mcpbin', 'mcp-server-test'))) process.kill(p, 'SIGKILL');
+          } catch {}
+        }
+      }
       console.log(JSON.stringify(res));
     })();
   `;
@@ -3214,6 +3377,8 @@ async function aiSandbox() {
   else fail('the busy fake session was not protected', JSON.stringify({ refused: res.bRefused, alive: res.bAlive }));
   if (res.a && res.a.ok && res.a.gone === 1 && JSON.stringify(res.a.ran) === JSON.stringify(['kill', '-TERM', String(res.a.pid)])) ok('for real: preview, confirm, run sent exactly kill -TERM <pid> to the idle fake claude, measured gone after');
   else fail('the idle fake claude was not stopped as expected', JSON.stringify(res.a));
+  if (res.mcpPid && res.mcpNamed && res.mcpAlive) ok('for real: the fake claude\'s only child, an idle fake MCP server (a link to /bin/sleep named mcp-server-test, its command line read with ps), did not block the button, was named in the row, and was not signalled: reckon stopped the claude alone and the test stopped what it spawned');
+  else fail('the fake MCP child was not handled as expected', JSON.stringify({ pid: res.mcpPid, named: res.mcpNamed, alive: res.mcpAlive }));
   if (res.untouched) ok('the transcripts were not touched (their modification times are what the test set)');
   else fail('a transcript changed during the test');
   if (res.logged) ok('actions.log inside the sandbox has the session\'s resume command');
