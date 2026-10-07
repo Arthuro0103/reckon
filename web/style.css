@@ -225,6 +225,7 @@ button.copy {
 }
 button.copy:hover { border-color: var(--cyan); color: var(--ink); }
 .command-bar .note { font-size: 12px; color: var(--ink3); }
+td.name button.copy { margin-top: 6px; }
 
 /* ------------------------------------------------------------------- DNS */
 /* What moved since the last scan. Sits under the verdict, above the charts:

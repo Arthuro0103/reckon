@@ -32,7 +32,7 @@ const get = async (u, opts) => {
   return r.json();
 };
 
-const state = { cache: null, light: null, dns: null, blocklist: null, network: null, pressure: null, tab: 'overview' };
+const state = { openers: [], cache: null, light: null, dns: null, blocklist: null, network: null, pressure: null, tab: 'overview' };
 const TABS = ['overview', 'memory', 'pressure', 'disk', 'internet', 'checks', 'dns'];
 
 const grid = (...f) => el('div', { class: 'grid' }, ...f.filter(Boolean));
@@ -42,6 +42,29 @@ const tile = (label, value, unit, foot) => el('div', { class: 'g-card' },
     el('div', { class: 'lab' }, label),
     el('div', { class: 'val' }, value, unit ? el('small', {}, unit) : null),
     foot ? el('div', { class: 'foot', html: foot }) : null));
+
+/* --------------------------------------------------------------- open-only */
+/* Buttons that OPEN something and change nothing: Finder on a measured path, Activity
+   Monitor, a Settings pane, the Terminal app (opened empty, never typed into). The
+   server holds the fixed table and refuses any path the last scan did not measure.
+   Where the platform has no openers the list is empty and no button is drawn. */
+function openBtn(id, label, target) {
+  if (!state.openers.includes(id)) return null;
+  const btn = el('button', { class: 'copy', onclick: async () => {
+    try {
+      const r = await fetch('/api/open', { method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(target ? { id, target } : { id }) });
+      const j = await r.json().catch(() => ({}));
+      btn.textContent = j.ok ? 'opened' : (j.error || 'could not open');
+    } catch { btn.textContent = 'could not open'; }
+    setTimeout(() => (btn.textContent = label), 1800);
+  } }, label);
+  return btn;
+}
+
+async function loadOpeners() {
+  try { state.openers = (await get('/api/open')).available || []; } catch { state.openers = []; }
+}
 
 /* ------------------------------------------------------------------ command */
 /* WHERE TO PASTE IT. This is not decoration.
@@ -72,7 +95,7 @@ function commandBlock(text, note) {
     catch { btn.textContent = 'select and copy'; }
   } }, 'copy');
   return el('div', { class: 'command' }, pre, shellNote(),
-    el('div', { class: 'command-bar' }, btn, el('span', { class: 'note' }, note || 'this panel runs nothing. you run it.')));
+    el('div', { class: 'command-bar' }, btn, /\bsudo\b/.test(text) ? openBtn('terminal', 'open Terminal') : null, el('span', { class: 'note' }, note || 'this panel runs nothing. you run it.')));
 }
 
 /* ============================================================== OVERVIEW */
@@ -487,12 +510,14 @@ function memory(d) {
   const yours = m.groups.find((g) => !isSystem(g)) || m.groups[0];
   const system = m.groups.find(isSystem);
 
+  const memOpen = [openBtn('activity', 'Activity Monitor'), openBtn('login', 'Login Items settings')].filter(Boolean);
   root.append(el('div', { class: 'verdict' },
     el('p', { class: 'headline' }, yours.name, ' is using ', el('em', {}, gb(kb2gb(yours.rssKB)) + ' GB'), '.'),
     el('p', { class: 'summary' },
       `That is ${yours.n} processes under one name — quitting the app quits all of them. `,
       system ? `${system.name.replace(/\s*\(system\)$/, '')} takes another ${gb(kb2gb(system.rssKB))} GB across ${system.n} processes, and those are not yours to quit. ` : '',
-      m.note)));
+      m.note),
+    memOpen.length ? el('div', { class: 'command-bar' }, ...memOpen) : null));
 
   const g = m.vm;
   // Categorical slots validated in this ring order (worst adjacent pair ΔE 8.0
@@ -676,7 +701,8 @@ function disk(c) {
   for (const t of targets) {
     body.append(el('tr', {},
       el('td', { class: 'name' }, el('div', {}, t.label),
-        el('div', { style: 'font:11.5px var(--mono);color:var(--ink3);margin-top:2px' }, short(t.path))),
+        el('div', { style: 'font:11.5px var(--mono);color:var(--ink3);margin-top:2px' }, short(t.path)),
+        openBtn('reveal', 'show in Finder', t.path)),
       el('td', { class: 'num' }, gb(kb2gb(t.kb)), ' GB'),
       el('td', {}, el('span', { class: 'tag' }, LABEL[t.verdict])),
       el('td', { style: 'color:var(--ink2);max-width:40ch' }, t.lose)));
@@ -790,6 +816,9 @@ function checks(c) {
     if (i.cost) c2.append(el('div', { class: 'lose' }, el('b', {}, 'Cost of acting: '), i.cost));
     const cmd = commandBlock(i.fix, 'paste it yourself. this panel does not execute.');
     if (cmd) c2.append(cmd);
+    const settings = i.id === 'backup' ? openBtn('backup', 'Time Machine settings')
+      : i.id === 'space' ? openBtn('storage', 'Storage settings') : null;
+    if (settings) c2.append(el('div', { class: 'command-bar' }, settings));
     root.append(c2);
   }
 }
@@ -1659,6 +1688,8 @@ function report(where, e) {
 (async function start() {
   try { state.cache = await get('/api/cache'); }
   catch (e) { state.cache = { hasCache: false }; startupFailure('reading the saved scan (/api/cache)', e); }
+
+  await loadOpeners();
 
   try { await refreshLight(); }
   catch (e) { startupFailure('measuring memory and disk (/api/light)', e); }
