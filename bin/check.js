@@ -2146,12 +2146,13 @@ async function diskActions(act) {
       { id: 'trash', path: P('.Trash'), verdict: 'disposable', label: 'Trash', lose: 'n', command: 'rm -rf ~/.Trash/*' },
       { id: 'ios-backups', path: P('Library', 'Application Support', 'MobileSync', 'Backup'), verdict: 'yours', label: 'iPhone backups', lose: 'n', command: null },
     ];
-    const fake = { hash: 'abc1234', dirty: '', tracked: false, off: '0', dangling: 'vol_a\nvol_b\n', stopped: 'old_db\n' };
+    const fake = { hash: 'abc1234', dirty: '', tracked: false, off: '0', ignored: '', dangling: 'vol_a\nvol_b\n', stopped: 'old_db\n' };
     const read = async (cmd, args) => {
       const a = args.join(' ');
       const R = (out) => ({ ok: true, out, erro: null });
       if (cmd === 'git' && /log -1/.test(a)) return R(fake.hash + '\n');
       if (cmd === 'git' && /status --porcelain/.test(a)) return R(fake.dirty);
+      if (cmd === 'git' && /ls-files --others --ignored/.test(a)) return fake.ignored == null ? { ok: false, out: '', erro: 'boom' } : R(fake.ignored);
       if (cmd === 'git' && /ls-files/.test(a)) return fake.tracked ? R('node_modules/x\n') : { ok: false, out: '', erro: 'did not match' };
       if (cmd === 'git' && /git-common-dir/.test(a)) return R(P('www', 'r', '.git') + '\n');
       if (cmd === 'git' && /worktree list/.test(a)) return R(`worktree ${P('www', 'r')}\n\nworktree ${fs.realpathSync(P('www', 'wt', 'a'))}\n`);
@@ -2247,6 +2248,31 @@ async function diskActions(act) {
     fake.off = '0';
     if (a5.r && a5.r.argv[0] === 'git' && a5.r.argv.includes('remove') && !a5.r.argv.some((x) => /^-(f|-force)$/.test(x)) && !a6.ok) ok('worktree: `git -C <main> worktree remove <path>` without --force, refused once it has commits off main');
     else fail('remove-worktree is wrong', JSON.stringify([a5, a6]));
+
+    // worktree: ignored files are invisible to git status and to git's own refusal
+    fake.ignored = 'node_modules/\n.next/\n';
+    const w1 = await e.preview({ action: wt.action.id, id: wt.action.ref });
+    fake.ignored = 'node_modules/\narte/bruto.png\n';
+    const w2 = await e.preview({ action: wt.action.id, id: wt.action.ref });
+    fake.ignored = null;
+    const w3 = await e.preview({ action: wt.action.id, id: wt.action.ref });
+    fake.ignored = 'node_modules/\n';
+    const w4 = await go(wt);
+    fake.ignored = '';
+    if (w1.ok && /2 ignored regenerable item\(s\)/.test(w1.proof) && /\.next\/, node_modules\//.test(w1.proof)
+      && !w2.ok && /arte\/bruto\.png/.test(w2.refused) && /copy them first/.test(w2.refused)
+      && !w3.ok && /did not list the ignored/.test(w3.refused)
+      && w4.r && w4.r.argv.join(' ') === `git -C ${P('www', 'r')} worktree remove ${fs.realpathSync(P('www', 'wt', 'a'))}`) {
+      ok('worktree: only regenerable ignored folders are allowed and listed; an ignored file outside the allowlist, or a failed listing, refuses; argv has no --force');
+    } else fail('worktree ignored-file check is wrong', JSON.stringify([w1, w2.refused, w3.refused, w4.r]));
+    // a change of the ignored set between the preview and the click is refused at the click
+    fake.ignored = 'node_modules/\n';
+    const w5 = await e.preview({ action: wt.action.id, id: wt.action.ref });
+    fake.ignored = 'node_modules/\ndist/\n';
+    const w6 = await e.run({ action: wt.action.id, id: wt.action.ref, nonce: w5.nonce });
+    fake.ignored = '';
+    if (w5.ok && !w6.ok) ok('worktree: the ignored set is measured again at the click, and a change refuses');
+    else fail('worktree ignored set changed after the preview and was acted on', JSON.stringify(w6));
 
     // the user's things: the Trash, by /usr/bin/trash or Finder
     const ios = byAction('move-to-trash');
@@ -2376,6 +2402,23 @@ async function diskSandbox() {
         rows = [...build().out].filter((r) => r.action); e.remember('disk', rows);   // a new scan
         const r4 = await go(row('remove-node-modules'));
         res.nm = { ok: r4.ok, gone: !fs.existsSync(path.join(repo, 'node_modules')), repo: fs.existsSync(path.join(repo, 'package.json')) && fs.existsSync(path.join(repo, '.git')) };
+        // a real worktree with ignored content, in a dry run (nothing is removed either way)
+        const base = g('rev-parse', '--abbrev-ref', 'HEAD');
+        const wtp = path.join(H, 'www', 'proj-wt');
+        g('worktree', 'add', '-q', '-b', 'wtb', wtp);
+        fs.writeFileSync(path.join(repo, '.gitignore'), 'node_modules\\narte\\n'); g('add', '.'); g('commit', '-qm', 'ignore');
+        g('-C', wtp, 'merge', '-q', base);
+        const e2 = act.createEngine({ dryRun: true, minDelayMs: 0, which: () => null, trashBin: () => null, exec: async () => ({ ok: false, out: '', erro: 'no' }),
+          memoryStats: async () => null, memoryPressure: async () => null, log: createLog({ dir: path.join(H, '.cache', 'reckon') }) });
+        const wrows = () => [...decisions.build({ docker: null, targets: [], repos: { repos: [], worktrees: [{ name: 'proj-wt', path: wtp, base, off: 0, days: 60, sizeKB: 300000, dirtyCount: 0 }] } }).out].filter((r) => r.action && r.action.id === 'remove-worktree');
+        const wgo = async () => { const r = wrows()[0]; e2.remember('disk', [r]); const p = await e2.preview({ action: r.action.id, id: r.action.ref }); return p.ok ? { p, r: await e2.run({ action: r.action.id, id: r.action.ref, nonce: p.nonce }) } : { p }; };
+        fs.mkdirSync(path.join(wtp, 'node_modules', 'dep'), { recursive: true }); fs.writeFileSync(path.join(wtp, 'node_modules', 'dep', 'i.js'), '1');
+        const w1 = await wgo();
+        fs.mkdirSync(path.join(wtp, 'arte'), { recursive: true }); fs.writeFileSync(path.join(wtp, 'arte', 'bruto.png'), 'art');
+        const w2 = await wgo();
+        res.wt = { allowed: !!(w1.r && w1.r.ok), lists: !!(w1.p.ok && /node_modules/.test(w1.p.proof) && /will be deleted with the worktree/.test(w1.p.proof)),
+          argv: w1.r && w1.r.argv.join(' ') === ['git', '-C', fs.realpathSync(repo), 'worktree', 'remove', fs.realpathSync(wtp)].join(' '),
+          refused: !w2.p.ok && /arte\\//.test(w2.p.refused || ''), file: fs.existsSync(path.join(wtp, 'arte', 'bruto.png')) };
         res.exec = exec.length;
         res.log = fs.readFileSync(path.join(H, '.cache', 'reckon', 'actions.log'), 'utf8').split('\\n').filter(Boolean).length;
       } catch (err) { res.error = String(err && err.stack || err).split('\\n').slice(0, 2).join(' | '); }
@@ -2401,6 +2444,8 @@ async function diskSandbox() {
   else fail('node_modules was removed from a repository that changed since the scan', JSON.stringify(res.changed));
   if (res.nm && res.nm.ok && res.nm.gone && res.nm.repo) ok('for real: after a new scan, only <repo>/node_modules is removed; package.json and .git stay');
   else fail('the sandboxed node_modules removal is wrong', JSON.stringify(res.nm));
+  if (res.wt && res.wt.allowed && res.wt.lists && res.wt.argv && res.wt.refused && res.wt.file) ok('for real: a worktree with only node_modules ignored is allowed and lists it; an ignored arte/bruto.png refuses and the file stays; argv has no --force');
+  else fail('the real-worktree ignored-file check is wrong', JSON.stringify(res.wt));
   if (res.exec === 0) ok('no program was run in the sandbox: removal is in-process, and no tool cleaner was reached');
   else fail('the sandbox reached a program', String(res.exec));
   if (res.log >= 2) ok(`actions.log was written inside the sandbox (${res.log} lines)`);
