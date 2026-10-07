@@ -3696,6 +3696,24 @@ async function memoryPlan() {
   else fail('the README does not describe the plan');
 }
 
+// pressure.collect() really runs. It was once broken by an inner `const probe` that shadowed the
+// module's probe() (a temporal-dead-zone throw), and every other test used fixtures, so the
+// suite stayed green while /api/pressure failed on every call.
+async function pressureReadsForReal() {
+  const os = require('node:os');
+  const { spawnSync } = require('node:child_process');
+  if (process.env.RECKON_CHECK_CHILD) { ok('(real pressure reading runs once, in the parent suite)'); return; }
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'reckon-pressure-'));
+  try {
+    const r = spawnSync(process.execPath, ['-e',
+      "require(process.argv[1]).collect().then(d=>{process.stdout.write(JSON.stringify({rows:Array.isArray(d.rows),probe:typeof (d.probe&&d.probe.factor)}))}).catch(e=>{process.stdout.write('ERR '+e.message);process.exit(1)})",
+      path.join(ROOT, 'lib/pressure.js')], { env: { ...process.env, HOME: home, USERPROFILE: home }, encoding: 'utf8', timeout: 60000 });
+    const out = String(r.stdout || '');
+    if (r.status === 0 && out === '{"rows":true,"probe":"number"}') ok('pressure.collect() runs end to end and returns rows and a probe factor');
+    else fail('pressure.collect() failed to run', (out || String(r.stderr || '')).slice(0, 200));
+  } finally { fs.rmSync(home, { recursive: true, force: true }); }
+}
+
 async function step(name, fn) {
   console.log('\n' + name);
   try { await fn(); }
@@ -3935,6 +3953,7 @@ async function phase4() {
   await step('native pet', async () => { await nativePet(); });
   await step('watch', async () => { await watchDecides(); });
   await step('memory measurements', async () => { await memoryMeasures(); });
+  await step('pressure for real', async () => { await pressureReadsForReal(); });
   await step('corner', async () => { await cornerIsSafe(); });
   await step('open only', async () => { await openOnly(); });
   await step('actions', async () => { await actions(); });
