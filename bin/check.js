@@ -1456,6 +1456,17 @@ async function serverGuards() {
     if (otherPort.status === 403) ok('the right address with the wrong port is refused too');
     else fail('a Host with the wrong port was answered', String(otherPort.status));
 
+    const hrWrong = await ask('GET', '/api/headroom', { host: `evil.example:${port}` });
+    if (hrWrong.status === 403) ok('/api/headroom refuses a rebound Host name');
+    else fail('/api/headroom answered a rebound Host', String(hrWrong.status));
+    const hrOk = await ask('GET', '/api/headroom');
+    let hrBody = null; try { hrBody = JSON.parse(hrOk.text); } catch { /* shown below */ }
+    if (hrOk.status === 200 && hrBody && 'availableMB' in hrBody && Array.isArray(hrBody.perApp) && typeof hrBody.verdict === 'string') ok('/api/headroom answers a GET with { availableMB, pressure, perApp, verdict }');
+    else fail('/api/headroom did not answer with its shape', `${hrOk.status} ${hrOk.text.slice(0, 80)}`);
+    const hrPost = await ask('POST', '/api/headroom');
+    if (hrPost.status === 403 || hrPost.status === 404 || hrPost.status === 405) ok('/api/headroom is not writable: a POST is refused');
+    else fail('a POST to /api/headroom was answered', String(hrPost.status));
+
     const page = await ask('GET', '/');
     const token = (page.text.match(/<meta name="reckon-token" content="([0-9a-f]{64})">/) || [])[1];
     if (page.status === 200 && token) ok('the page is served with a fresh 64-hex token written in');
@@ -2549,6 +2560,216 @@ async function actSandbox() {
   else fail('the test wrote to the real ~/.cache/reckon/actions.log');
 }
 
+// Three read-only memory measurements: swap ACTIVITY (not size), HEADROOM, and LEAKS.
+// Everything is a fixture: a fake vm_stat, a fake process list, and series whose time is
+// the `t` each point carries, so three hours of story run in milliseconds.
+async function memoryMeasures() {
+  const w = require(path.join(ROOT, 'lib/watch.js'));
+  const hr = require(path.join(ROOT, 'lib/headroom.js'));
+  const lk = require(path.join(ROOT, 'lib/leak.js'));
+  const hist = require(path.join(ROOT, 'lib/history.js'));
+  const os = require('node:os');
+  const platform = require(path.join(ROOT, 'lib/platform'));
+  const R = (o) => ({ swapOfRam: 0.05, swapUsedMB: 800, swapTotalMB: 1024, ramMB: 16384, gainedOfRam: null, spanMs: null,
+    factor: 1.1, probe: { nowMs: 350, bestMs: 319, factor: 1.1 }, rows: [], load1: 2, load5: 2, ncpu: 10,
+    swapOutPerSec: 0, swapInPerSec: 0, swapMovingStreak: 0, leaks: [], ...o });
+  const run = (readings) => {
+    let st = w.emptyState(); const all = [];
+    readings.forEach((r, i) => { const o = w.step(st, r, i * 30_000); st = o.state; all.push(...o.events); });
+    return all;
+  };
+  const MBYTES = 1048576;
+
+  // ---- 1. swap activity, not size
+  const still = run(Array.from({ length: 10 }, () => R({ swapOfRam: 0.62, swapUsedMB: 10200 })));
+  if (!still.length) ok('10 GB of swap that just sits there never alerts');
+  else fail('swap size alone raised an alert', still.map((e) => e.kind).join(','));
+  const oneBurst = run([R({ swapOfRam: 0.4, swapMovingStreak: 1, swapOutPerSec: 900 }), R({ swapOfRam: 0.4, swapMovingStreak: 0 })]);
+  if (!oneBurst.length) ok('one burst of swap-outs is not sustained, so it is silent');
+  else fail('a single moving reading alerted', oneBurst.map((e) => e.kind).join(','));
+
+  const moving = run([R({ swapOfRam: 0.4, swapUsedMB: 6500, swapOutPerSec: 350, swapInPerSec: 120, swapMovingStreak: 1 }),
+    R({ swapOfRam: 0.4, swapUsedMB: 6500, swapOutPerSec: 350, swapInPerSec: 120, swapMovingStreak: 2 })]);
+  const sw = moving.find((e) => e.type === 'alert' && e.kind === 'swap');
+  if (sw && /350 pages\/s/.test(sw.title) && /350 pages\/s going out/.test(sw.proof) && sw.cost && sw.lose) ok('swap that is moving alerts, with the measured rate in the title and the proof');
+  else fail('the moving-swap alert is missing or states no rate', JSON.stringify(sw && { title: sw.title, proof: sw.proof }));
+
+  const slowProbe = run([R({ swapOfRam: 0.4, swapUsedMB: 6500, swapOutPerSec: 3, swapInPerSec: 1, factor: 9, probe: { nowMs: 2900, bestMs: 319, factor: 9 } })]);
+  const sw2 = slowProbe.find((e) => e.kind === 'swap');
+  if (sw2 && /3 pages\/s/.test(sw2.proof)) ok('held swap plus a slow probe alerts, and still states the measured rate');
+  else fail('the slowdown-probe path for swap is wrong', JSON.stringify(sw2));
+  const fastNoSwap = run([R({ swapOfRam: 0.05, factor: 9, probe: { nowMs: 2900, bestMs: 319, factor: 9 } })]);
+  if (!fastNoSwap.some((e) => e.kind === 'swap')) ok('a slow probe with almost no swap does not blame swap');
+  else fail('a slow probe with 5% swap raised a swap alert');
+
+  // the rate itself, from cumulative counters
+  const t0 = { t: 0, swapouts: 1000, swapins: 500 };
+  const r1 = w.swapRate(t0, { t: 30_000, swapouts: 7000, swapins: 800 });
+  if (r1 && r1.outPerSec === 200 && r1.inPerSec === 10) ok('the rate is the counter difference over the seconds between two readings');
+  else fail('swapRate arithmetic is wrong', JSON.stringify(r1));
+  const nulls = [w.swapRate(null, t0), w.swapRate(t0, { t: 1, swapouts: null, swapins: null }), w.swapRate(t0, { t: 0, swapouts: 2000, swapins: 600 }),
+    w.swapRate(t0, { t: 30_000, swapouts: 10, swapins: 5 })];
+  if (nulls.every((x) => x === null)) ok('a missing counter, no elapsed time, or a counter that went backwards is null, never 0');
+  else fail('swapRate returned a number where it could not measure', JSON.stringify(nulls));
+
+  // the whole path through sampleCheap with a stubbed platform, restored after
+  const keep = { m: platform.memoryStats, s: platform.swapStats };
+  try {
+    let n = 0;
+    const counters = [[1000, 0], [1000, 0], [1000, 0], [10_000, 400], [19_000, 800]];   // flat, then 300 pages/s twice
+    platform.memoryStats = async () => { const c = counters[Math.min(n++, counters.length - 1)]; return { swapouts: c[0], swapins: c[1] }; };
+    platform.swapStats = async () => ({ usedMB: 9000, totalMB: 10000, freeMB: 1000 });
+    const mem = { prev: null, movingStreak: 0 };   // no `series`: the leak sampler is not part of this case
+    const hist2 = [];
+    const taken = [];
+    for (let i = 0; i < 5; i++) taken.push(await w.sampleCheap(hist2, 1_000_000 + i * 30_000, mem));
+    const still2 = taken.slice(0, 3).every((x) => x.swapMovingStreak === 0) && taken[0].swapOutPerSec === null && taken[1].swapOutPerSec === 0;
+    const fast = taken[4].swapMovingStreak === 2 && Math.round(taken[4].swapOutPerSec) === 300;
+    const ev = run([taken[0], taken[1], taken[2]]);
+    const ev2 = (() => { let st = w.emptyState(); const out = []; for (const [i, r] of [taken[3], taken[4]].entries()) { const o = w.step(st, r, i * 30_000); st = o.state; out.push(...o.events); } return out; })();
+    if (still2 && !ev.length) ok('read end to end: 9 GB held with flat counters stays silent');
+    else fail('flat counters were read as movement', JSON.stringify(taken.map((x) => [x.swapOutPerSec, x.swapMovingStreak])));
+    if (fast && ev2.some((e) => e.kind === 'swap' && /300 pages\/s/.test(e.proof))) ok('read end to end: two readings at 300 pages/s raise the swap alert');
+    else fail('moving counters did not reach the alert', JSON.stringify(taken.slice(3).map((x) => [x.swapOutPerSec, x.swapMovingStreak])));
+  } finally { platform.memoryStats = keep.m; platform.swapStats = keep.s; }
+
+  // the lantern: only what feeds `level` changed, never the state cut-offs
+  const L = w.levelOf;
+  if (L({ swapOfRam: 0.62, moving: false }) < 0.15 && w.stateOf(L({ swapOfRam: 0.62, moving: false })) === 'resting') ok('held swap with nothing moving reads as a resting lantern');
+  else fail('held swap still colours the lantern', String(L({ swapOfRam: 0.62, moving: false })));
+  if (L({ swapOfRam: 0.79, moving: true }) === 1 && L({ swapOfRam: 0.79 }) === 1 && L({ swapOfRam: 0.79, factor: 20, moving: false }) === 1) ok('moving swap, or an unmeasured rate, or a slow probe, keeps the old scale');
+  else fail('the level scale changed where it must not');
+  if (/swapOutPagesPerSec: 100/.test(read('lib/watch.js')) && w.TUNING.swapOutPagesPerSec === 100 && w.TUNING.swapMovingReadings === 2) ok('the swap-out line and the two-reading rule are TUNING constants');
+  else fail('the swap activity thresholds are not in TUNING');
+
+  // ---- 2. headroom
+  const fakeVm = (o) => ({ totalBytes: 16384 * MBYTES, freeBytes: 1024 * MBYTES, inactiveBytes: 3072 * MBYTES, purgeableBytes: 1024 * MBYTES, activeBytes: 8000 * MBYTES, wiredBytes: 2000 * MBYTES, compressedBytes: 2000 * MBYTES, ...o });
+  const P = (family, command, rssKB, pid) => ({ family, command, rssKB, pid, ppid: 1, cpuPct: 0 });
+  const procs = [P('Claude Code (CLI)', '/usr/local/bin/claude', 300 * 1024, 1), P('Claude Code (CLI)', '/usr/local/bin/claude', 300 * 1024, 2), P('Claude Code (CLI)', '/usr/local/bin/claude', 300 * 1024, 3),
+    P('Godot_v4.3', '/Applications/Godot.app/Contents/MacOS/Godot', 1200 * 1024, 4), P('node (dev servers)', '/usr/local/bin/node', 900 * 1024, 5)];
+  const a1 = hr.compute({ vm: fakeVm({}), procs, lines: [], totalBytes: 16384 * MBYTES });
+  if (a1.availableMB === 4096) ok('headroom is free + max(inactive, purgeable): 1 GB + max(3 GB, 1 GB) = 4096 MB');
+  else fail('the headroom formula is wrong', String(a1.availableMB));
+  const a2 = hr.compute({ vm: fakeVm({ purgeableBytes: 5120 * MBYTES }), procs, lines: [], totalBytes: 16384 * MBYTES });
+  if (a2.availableMB === 6144) ok('purgeable memory larger than inactive is used once, not added on top (1 GB + 5 GB)');
+  else fail('purgeable was double counted or dropped', String(a2.availableMB));
+  const a3 = hr.compute({ vm: fakeVm({ purgeableBytes: null }), procs, lines: [], totalBytes: 16384 * MBYTES });
+  if (a3.availableMB === 4096) ok('a platform with no purgeable notion (null) is not read as an error');
+  else fail('purgeableBytes null broke the formula', String(a3.availableMB));
+  const claude = a1.perApp.find((x) => x.key === 'claude');
+  const godot = a1.perApp.find((x) => x.key === 'godot');
+  // room = 4096 - 1024 kept for the system = 3072
+  if (claude && claude.typicalMB === 350 && claude.source === 'default' && claude.fits === 8 && claude.running === 3) ok('with no history the default is used and fits = floor((available - reserve) / typical) = 8');
+  else fail('the fits arithmetic with defaults is wrong', JSON.stringify(claude));
+  if (godot && godot.fits === 3 && godot.typicalMB === 1000) ok('a heavier app fits fewer times: Godot at 1000 MB fits 3');
+  else fail('Godot fits is wrong', JSON.stringify(godot));
+  const lines = Array.from({ length: 5 }, (_, i) => ({ t: i, fam: {}, app: { claude: { mb: 900, n: 3 } } }));
+  const a4 = hr.compute({ vm: fakeVm({}), procs, lines, totalBytes: 16384 * MBYTES });
+  const claude4 = a4.perApp.find((x) => x.key === 'claude');
+  if (claude4.typicalMB === 300 && claude4.source === 'history' && claude4.fits === 10) ok('history wins over the default: 900 MB over 3 processes is 300 MB each, so 10 fit');
+  else fail('history was not used', JSON.stringify(claude4));
+  const shape = a1 && typeof a1.availableMB === 'number' && ['comfortable', 'tight', 'critical'].includes(a1.pressure) && Array.isArray(a1.perApp)
+    && a1.perApp.every((x) => typeof x.name === 'string' && typeof x.typicalMB === 'number' && Number.isInteger(x.fits)) && typeof a1.verdict === 'string' && a1.verdict.length > 0;
+  if (shape) ok('the answer has the shape { availableMB, pressure, perApp: [{ name, typicalMB, fits }], verdict }');
+  else fail('the headroom answer has the wrong shape', JSON.stringify(a1).slice(0, 200));
+  const crit = hr.compute({ vm: fakeVm({ freeBytes: 100 * MBYTES, inactiveBytes: 200 * MBYTES, purgeableBytes: 0 }), procs, lines: [], totalBytes: 16384 * MBYTES });
+  if (crit.pressure === 'critical' && crit.perApp.every((x) => x.fits === 0) && /Start nothing more/.test(crit.verdict)) ok('under the reserve nothing fits, the pressure is critical, and the verdict says so');
+  else fail('a nearly empty machine still has room', JSON.stringify(crit.perApp.map((x) => x.fits)));
+  const none = hr.compute({ vm: null, procs, lines: [], totalBytes: 16384 * MBYTES });
+  if (none.availableMB === null && none.pressure === null && /Cannot tell/.test(none.verdict)) ok('no memory reading means "cannot tell", not a guess');
+  else fail('headroom guessed without a reading');
+  const electron = hr.classify({ family: 'Slack', command: '/Applications/Slack.app/Contents/MacOS/Slack' });
+  const sim = hr.classify({ family: 'launchd_sim', command: '/Library/Developer/CoreSimulator/Volumes/iOS/launchd_sim' });
+  if (electron && electron.key === 'electron' && sim && sim.key === 'simulators' && hr.classify({ family: 'Chrome', command: '/Applications/Google Chrome.app/x' }) === null) ok('apps are classified by family: AI CLIs, Godot, Electron, Docker VM, simulators');
+  else fail('classify put a process in the wrong family');
+  const hsrc = read('lib/headroom.js');
+  if (!/writeFile|appendFile|rename|unlink|rmSync|child_process|spawn|exec\(|recordFamilies|recordMemory/.test(hsrc)) ok('lib/headroom.js has no way to write, delete or start anything');
+  else fail('lib/headroom.js can write or start something');
+
+  // ---- 3. leaks
+  const HOUR = 3_600_000;
+  const rand = (seed) => () => { seed = (seed * 1664525 + 1013904223) % 4294967296; return seed / 4294967296; };
+  const make = (hours, f, step = 4 * 60_000) => { const out = []; for (let t = 0; t <= hours * HOUR; t += step) out.push({ t, mb: f(t / HOUR) }); return out; };
+  const rnd = rand(7);
+  const rising = make(3.2, (h) => 800 + 120 * h + (rnd() - 0.5) * 20);
+  const v = lk.verdict(rising);
+  if (v && Math.abs(v.slopeMBPerHour - 120) < 15 && v.hours >= 2.8 && v.lastMB > v.firstMB) ok('a family climbing 120 MB/h for three hours is a leak, with its slope and duration');
+  else fail('a true leak was missed', JSON.stringify(v));
+  const flat = make(3.2, () => 1500 + (rnd() - 0.5) * 120);
+  const noisy = make(3.2, (h) => 1500 + 300 * Math.sin(h * 9) + (rnd() - 0.5) * 200);
+  const late = make(3.2, (h) => 900 + (h < 2.2 ? 0 : 200 * (h - 2.2)) + (rnd() - 0.5) * 10);
+  const stopped = make(3.2, (h) => 900 + (h < 2 ? 150 * h : 300) + (rnd() - 0.5) * 10);
+  const saw = make(3.2, (h) => 900 + 500 * (h % 1) + (rnd() - 0.5) * 10);
+  const fine = [lk.verdict(flat), lk.verdict(noisy), lk.verdict(late), lk.verdict(stopped), lk.verdict(saw)];
+  if (fine.every((x) => x === null)) ok('flat, noisy, late-starting, stopped and sawtooth families are not flagged');
+  else fail('a family that is not leaking was flagged', JSON.stringify(fine.map((x) => x && Math.round(x.slopeMBPerHour))));
+  const tooShort = make(1, (h) => 800 + 400 * h);
+  const slow = make(3.2, (h) => 800 + 30 * h);
+  if (lk.verdict(tooShort) === null && lk.verdict(slow) === null) ok('under three hours of readings, or under 50 MB/h, is not enough');
+  else fail('too little evidence was called a leak');
+  const tiny = make(3.2, (h) => 10 + 55 * h);
+  if (lk.verdict(tiny) === null) ok('a family under 200 MB is too small to matter');
+  else fail('a tiny family was flagged');
+  const ser = lk.emptySeries();
+  for (let i = 0; i < 200; i++) lk.push(ser, { A: 500 + i }, i * lk.LEAK.pointEveryMs);
+  if (ser.map.get('A').length === 60) ok('the in-memory series is bounded at 60 points');
+  else fail('the series grew past its bound', String(ser.map.get('A').length));
+  if (lk.push(ser, { A: 1 }, 199 * lk.LEAK.pointEveryMs + 1000) === false) ok('two samples inside the spacing rule are one point');
+  else fail('the spacing rule did not hold');
+  const seeded = lk.seed(lk.emptySeries(), Array.from({ length: 50 }, (_, i) => ({ t: i * lk.LEAK.pointEveryMs, fam: { A: { mb: 400 + 40 * i, n: 2 } } })));
+  if (seeded.map.get('A').length === 50) ok('a restart rebuilds the series from the history file lines');
+  else fail('seed lost points');
+
+  // the alert: proof and lose text, and no command invented
+  const lkv = { family: 'Claude Code (CLI)', ...v };
+  const events = run([R({ leaks: [lkv] })]);
+  const al = events.find((e) => e.kind === 'leak:Claude Code (CLI)' && e.type === 'alert');
+  if (al && /MB per hour/.test(al.proof) && /GB|MB/.test(al.proof) && /h \(/.test(al.proof) && /loses its in-memory state/.test(al.lose) && al.cost) ok('a leak alert carries first and last RSS, slope, duration, cost, and "restarting loses its in-memory state"');
+  else fail('the leak alert is incomplete', JSON.stringify(al));
+  if (al && al.command === null && !/kill|restart it with|quit/i.test(al.hint)) ok('a leak alert with no pressure row shows NO command: none is invented');
+  else fail('a leak alert invented a command', JSON.stringify(al && { command: al.command, hint: al.hint }));
+  const row = { id: 'swarm-yes', title: '365 copies of yes', kb: 171 * 1024, costPct: 300, confidence: 'high', proof: 'p', lose: 'l', command: 'kill 101 102' };
+  const al2 = run([R({ leaks: [lkv], rows: [row] })]).find((e) => e.kind === 'leak:Claude Code (CLI)');
+  if (al2 && al2.command === 'kill 101 102') ok('an existing high-confidence pressure row command is shown, as for every other alert');
+  else fail('the pressure row command was not offered', JSON.stringify(al2 && al2.command));
+  const cleared = run([R({ leaks: [lkv] }), R({ leaks: [] }), R({ leaks: [] })]);
+  if (cleared.some((e) => e.type === 'clear' && e.kind === 'leak:Claude Code (CLI)')) ok('a leak clears after two readings without it');
+  else fail('a leak never cleared');
+  const rep = run(Array.from({ length: 8 }, () => R({ leaks: [lkv] })));
+  if (rep.filter((e) => e.kind.startsWith('leak:')).length === 1) ok('a leak speaks once, not once per reading');
+  else fail('a leak rang more than once');
+  const unknownLeak = run([R({ leaks: [lkv] }), R({ leaks: null }), R({ leaks: null }), R({ leaks: null })]);
+  if (!unknownLeak.some((e) => e.type === 'clear')) ok('a family sample that was not taken cannot clear a leak');
+  else fail('an unmeasured leak reading cleared an alert');
+  if (w.TUNING.leak === lk.LEAK && lk.LEAK.slopeMBPerHour === 50 && lk.LEAK.windowHours === 3) ok('the leak slope (50 MB/h) and window (3 hours) are TUNING constants');
+  else fail('the leak thresholds are not in TUNING');
+
+  // the history file: one line per sample, trimmed
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'reckon-fam-check-'));
+  try {
+    for (let i = 0; i < 1600; i++) hist.recordFamilies({ t: i, fam: { 'Claude Code (CLI)': { mb: 500 + i, n: 2 } }, app: { claude: { mb: 600, n: 2 } } }, { dir });
+    const back = hist.readFamilies({ dir, limit: 5000 });
+    if (back.length <= 1500 && back.length >= 1000 && back[back.length - 1].t === 1599 && back[back.length - 1].fam['Claude Code (CLI)'].mb === 2099) ok('family-history.jsonl is appended inside the cache folder and trimmed like memory-history.jsonl');
+    else fail('the family history was not trimmed or lost its tail', String(back.length));
+    if (fs.readdirSync(dir).every((f) => f === hist.FAM_FILE)) ok('the history leaves no stray files behind');
+    else fail('the history left temp files', fs.readdirSync(dir).join(','));
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+
+  // ---- the platform seam, and the routes
+  if (/purgeableBytes: null/.test(read('lib/platform/win32.js')) && /purgeableBytes: bytes\('Pages purgeable'\)/.test(read('lib/platform/darwin.js'))) ok('purgeableBytes is a number on macOS and null on Windows, never 0');
+  else fail('purgeableBytes is not null where the platform has no such notion');
+  if (/swapins: numOr\(d\.swapins, null\)/.test(read('lib/platform/win32.js'))) ok('a platform without the page counters returns null, which swapRate keeps as null');
+  else fail('win32 no longer returns null for missing counters');
+  const srv = read('server.js');
+  const at = srv.indexOf("route === '/api/headroom'");
+  if (at > srv.indexOf('HOSTS.has(req.headers.host)') && srv.indexOf('HOSTS.has(req.headers.host)') > 0 && /route === '\/api\/headroom' && req\.method === 'GET'/.test(srv)) ok('/api/headroom is a GET and sits below the Host guard');
+  else fail('/api/headroom is not guarded as a GET');
+  if (!/route === '\/api\/headroom'(?! && req\.method === 'GET')/.test(srv)) ok('/api/headroom has no route without the GET condition');
+  else fail('there is a /api/headroom route that is not GET only');
+  if (!/headroom\.(?!collect)\w+\(/.test(srv.replace(/require\('\.\/lib\/headroom'\)/, ''))) ok('server.js uses headroom only to read');
+  else fail('server.js calls something on headroom besides collect()');
+}
+
 async function step(name, fn) {
   console.log('\n' + name);
   try { await fn(); }
@@ -2787,6 +3008,7 @@ async function phase4() {
   await step('companion', async () => { await petStatusIsShape(); });
   await step('native pet', async () => { await nativePet(); });
   await step('watch', async () => { await watchDecides(); });
+  await step('memory measurements', async () => { await memoryMeasures(); });
   await step('corner', async () => { await cornerIsSafe(); });
   await step('open only', async () => { await openOnly(); });
   await step('actions', async () => { await actions(); });

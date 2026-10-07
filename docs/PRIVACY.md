@@ -21,6 +21,13 @@ no accounts, no API keys, and no server it talks to except itself.
   `localhost:<port>`, refuses a `POST` whose `Origin` is any other site, and requires on
   every `POST` a random token it draws at each launch and writes only into the page it serves.
 - Caches what it measured in `~/.cache/reckon/` so it doesn't re-measure on every click.
+- For the memory measurements it reads the `vm_stat` counters (free, inactive and purgeable pages,
+  and the cumulative swap-in and swap-out page counts), the process list (name, family and resident
+  size, never the contents of any process), and its own history files in `~/.cache/reckon/`.
+  `reckon watch` appends the resident size of each big process family, and of the known heavy apps
+  (the AI CLIs, Godot, Electron apps, the Docker VM, Xcode simulators), to
+  `~/.cache/reckon/family-history.jsonl`, trimmed to its last 1,000 lines. Only names and megabytes
+  are kept; `GET /api/headroom` reads that file and writes nothing.
 - If you run `reckon watch --pet` on a Mac, compiles one Swift file (`native/pet.swift`) on your own
   machine and runs it as a child of the watcher. The pet reads `~/.cache/reckon/watch.json`, draws a
   small window above your other windows, and writes one file, `~/.cache/reckon/pet.json`, with which

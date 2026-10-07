@@ -161,10 +161,23 @@ the command it shows you.
 **It does not alert on load.** Load counts runnable work, and a machine doing a lot of legitimate work
 looks the same as one that is suffering: an ordinary parallel compile read a load of 72 on ten cores
 with swap at zero and half the RAM free, and the probe said the machine was 1.1x its best. So it
-watches three things: **seconds stolen** (the probe from the Pressure tab, against the best this machine
-has ever done), **swap against RAM** and how fast it is filling (not against the swap file's own size,
-which macOS grows on demand), and **orphaned swarms** that are costing real time. Load may make it go
-and look; it is never the answer.
+watches four things: **seconds stolen** (the probe from the Pressure tab, against the best this machine
+has ever done), **swap activity** (pages going out per second, read from the `vm_stat` counters;
+swap that only sits there is "resting" and never alerts, because five idle gigabytes cost nothing),
+**orphaned swarms** that are costing real time, and **leaks** (a process family whose memory has climbed
+more than 50 MB an hour for three hours in a row). Load may make it go and look; it is never the
+answer. A leak alert shows no command of its own: it describes the family, says that restarting it
+loses its in-memory state, and offers only a high-confidence Pressure row if there already is one.
+The Watch tab shows one line for swap: `resting`, or `moving N pages/s`.
+
+**Headroom.** `GET /api/headroom` answers "how much more can I start?" for people and for other tools,
+an agent about to open another session among them. It reads memory the way the lantern does and
+starts nothing: `availableMB` is `free + max(inactive, purgeable)`, `pressure` is `comfortable`,
+`tight` or `critical`, and `perApp` lists Claude Code, Codex, Godot, Electron apps, the Docker VM and
+Xcode simulators with their typical size and `fits`, how many more fit before the machine would need
+swap (1 GB is kept back for the system). Typical sizes are learned from `family-history.jsonl`, which
+`reckon watch` appends to in `~/.cache/reckon/`; with fewer than three samples the answer uses a fixed
+default and says `"source": "default"`.
 
 An alert says how much it costs, the proof of the number, and what you lose if it is wrong. One problem
 rings once, again only if it gets worse by a step, and is announced once when it clears. The banner is

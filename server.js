@@ -33,6 +33,10 @@ const triage = require('./lib/triage');
 const platform4 = require('./lib/platform');
 // ---- end phase 4 requires
 
+// ---- headroom (separate block, to ease merging)
+const headroom = require('./lib/headroom');
+// ---- end headroom require
+
 // ---- phase 1: open-only actions (separate block, to ease merging)
 const opener = require('./lib/open');
 // ---- end phase 1 require
@@ -284,6 +288,11 @@ const server = http.createServer(async (req, res) => {
       return json(res, r, r.ok ? 200 : 400);
     }
     // ---- end phase 4 routes
+
+    // ---- headroom: one GET, read-only, for people and for other tools. It reads vm_stat, the
+    // process list and the family history file, and it starts and writes nothing.
+    if (route === '/api/headroom' && req.method === 'GET') return json(res, await headroom.collect());
+    // ---- end headroom route
 
     // ---- phase 1: open-only actions. The body is { id, target? }; only `reveal` takes a
     // target, and only a path the last scan measured. Nothing here modifies anything.

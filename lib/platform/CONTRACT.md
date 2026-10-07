@@ -67,12 +67,16 @@ the panel has to chart.
   pageSizeBytes: 16384,
   totalBytes: 17179869184,       // physical RAM
   freeBytes, activeBytes, inactiveBytes, wiredBytes, compressedBytes,
+  purgeableBytes,                // pages the system can drop for free; null where there is no such notion
   compressions: 41203911,        // counters accumulated SINCE BOOT, not a reading of now
   decompressions, swapins, swapouts
 }
 ```
 `null` when the memory tool is missing. The counters are the proof the machine has been
 suffering; the `…Bytes` fields are its state right now. Do not mix them on one chart.
+`swapins` and `swapouts` are cumulative PAGE counts: a caller that wants a rate keeps two
+readings and divides the difference by the seconds between them (`lib/watch.js` `swapRate`).
+A counter that goes backwards (a reboot) is not a rate, and `null` counters are not zero.
 
 ### `swapStats()` → object | null · **light**
 ```js

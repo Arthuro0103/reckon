@@ -2072,6 +2072,7 @@ function watchTab(w) {
     root.append(grid(
       tile('Last reading', `${Math.round(w.ageMs / 1000)}`, 's ago', `every ${Math.round((s.intervalMs || 30000) / 1000)} s; counted stopped after ${Math.round(w.staleAfterMs / 1000)} s of silence`),
       s.reading && s.reading.swapOfRam != null ? tile('Swap', `${Math.round(s.reading.swapOfRam * 100)}`, '% of RAM', 'measured against the machine’s RAM, not the swap file') : null,
+      swapActivityTile(s.reading),
       s.cost ? tile('The watcher itself', `${s.cost.rssMB}`, 'MB', `${s.cost.cpuPct}% of a core`) : null));
   }
 
@@ -2087,6 +2088,18 @@ function watchTab(w) {
       e.command ? commandBlock(e.command) : null));
   }
   root.append(list);
+}
+
+/* The line "swap: resting / moving N pages/s". Swap SIZE alone is resting; what the watcher
+   alerts on is pages going out. null when the watcher has not yet compared two readings. */
+function swapActivityTile(r) {
+  if (!r || r.swapOfRam == null) return null;
+  const rate = r.swapOutPerSec;
+  const word = rate == null ? 'not measured yet' : r.swapMoving ? `moving ${Math.round(rate).toLocaleString()} pages/s` : 'resting';
+  const foot = rate == null
+    ? 'the watcher needs two readings to see whether pages are moving'
+    : `${Math.round(rate).toLocaleString()} pages/s out, ${Math.round(r.swapInPerSec || 0).toLocaleString()} in. Swap that only sits there is resting.`;
+  return tile('swap', word, null, foot);
 }
 
 /* ----------------------------------------------------- MEMORY, REMEMBERED */
