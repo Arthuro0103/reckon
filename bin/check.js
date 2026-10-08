@@ -3714,6 +3714,37 @@ async function pressureReadsForReal() {
   } finally { fs.rmSync(home, { recursive: true, force: true }); }
 }
 
+// `reckon watch --once` is a reading for a person. It once rewrote watch.json (with its own pid)
+// and then stopState() wrote `running: false`, which makes a live pet exit (native/pet.swift
+// quits on running:false). It must leave the file a live watcher keeps exactly as it found it.
+async function onceLeavesTheWatcherAlone() {
+  const os = require('node:os');
+  const { spawnSync } = require('node:child_process');
+  const src = read('lib/watch.js');
+  const onceBranch = src.slice(src.indexOf('if (o.once) {'), src.indexOf("const me = await self.measure()", src.indexOf('if (o.once) {')));
+  if (onceBranch && !/stopState\(/.test(onceBranch)) ok('the --once branch never calls stopState()');
+  else fail('the --once branch calls stopState(), which writes running:false');
+  if (/if \(!ctx\.once\) writeAtomic\(STATE_FILE/.test(src)) ok('tick() writes the snapshot only when it is not --once');
+  else fail('tick() can write watch.json during --once');
+  if (process.env.RECKON_CHECK_CHILD) { ok('(real --once run happens once, in the parent suite)'); return; }
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'reckon-once-'));
+  try {
+    const dir = path.join(home, '.cache', 'reckon');
+    fs.mkdirSync(dir, { recursive: true });
+    const file = path.join(dir, 'watch.json');
+    const seed = JSON.stringify({ running: true, pid: 999999, level: 0.9, state: 'strained', sentinel: 'a live watcher wrote this' });
+    fs.writeFileSync(file, seed);
+    const before = fs.statSync(file).mtimeMs;
+    const r = spawnSync(process.execPath, [path.join(ROOT, 'bin/reckon'), 'watch', '--once'],
+      { env: { ...process.env, HOME: home, USERPROFILE: home }, encoding: 'utf8', timeout: 90000 });
+    const same = fs.readFileSync(file, 'utf8') === seed && fs.statSync(file).mtimeMs === before;
+    if (r.status === 0 && /^level /m.test(String(r.stdout))) ok('--once ran end to end and printed its reading');
+    else fail('--once did not run', String(r.stderr || r.stdout).slice(0, 200));
+    if (same) ok('--once left a live watcher\'s watch.json exactly as it was (content and mtime)');
+    else fail('--once rewrote watch.json');
+  } finally { fs.rmSync(home, { recursive: true, force: true }); }
+}
+
 async function step(name, fn) {
   console.log('\n' + name);
   try { await fn(); }
@@ -3954,6 +3985,7 @@ async function phase4() {
   await step('watch', async () => { await watchDecides(); });
   await step('memory measurements', async () => { await memoryMeasures(); });
   await step('pressure for real', async () => { await pressureReadsForReal(); });
+  await step('watch --once', async () => { await onceLeavesTheWatcherAlone(); });
   await step('corner', async () => { await cornerIsSafe(); });
   await step('open only', async () => { await openOnly(); });
   await step('actions', async () => { await actions(); });
