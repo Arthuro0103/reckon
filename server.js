@@ -3,6 +3,7 @@ const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
+const zlib = require('node:zlib');
 const scan = require('./lib/scan');
 const self = require('./lib/self');
 const dns = require('./lib/dns');
@@ -119,13 +120,34 @@ function index(res) {
   });
 }
 
-function static_(res, file) {
+// Static files are small and local, but the panel still asks for them on every open.
+// Gzip them once (kept in memory, keyed by mtime) and let the browser revalidate with an
+// ETag, so a repeat visit costs a 304 and nothing else. `no-cache` means "ask first", not
+// "keep nothing": a changed file is always seen. The page itself stays `no-store` (token).
+const STATIC_CACHE = new Map();
+function static_(req, res, file) {
   const target = path.join(WEB, file);
   if (!target.startsWith(WEB)) { res.writeHead(403); return res.end('no'); }
-  fs.readFile(target, (err, buf) => {
-    if (err) { res.writeHead(404); return res.end('not found: ' + file); }
-    res.writeHead(200, { 'content-type': TYPES[path.extname(target)] || 'application/octet-stream', 'cache-control': 'no-store' });
-    res.end(buf);
+  fs.stat(target, (serr, st) => {
+    if (serr) { res.writeHead(404); return res.end('not found: ' + file); }
+    const key = target + ':' + st.mtimeMs + ':' + st.size;
+    const send = (hit) => {
+      const headers = { 'content-type': TYPES[path.extname(target)] || 'application/octet-stream',
+        'cache-control': 'no-cache', etag: hit.etag, vary: 'Accept-Encoding' };
+      if (req.headers['if-none-match'] === hit.etag) { res.writeHead(304, headers); return res.end(); }
+      const gz = /\bgzip\b/.test(req.headers['accept-encoding'] || '');
+      if (gz) headers['content-encoding'] = 'gzip';
+      res.writeHead(200, headers);
+      res.end(gz ? hit.gz : hit.raw);
+    };
+    if (STATIC_CACHE.has(key)) return send(STATIC_CACHE.get(key));
+    fs.readFile(target, (err, raw) => {
+      if (err) { res.writeHead(404); return res.end('not found: ' + file); }
+      const hit = { raw, gz: zlib.gzipSync(raw, { level: 9 }), etag: '"' + crypto.createHash('sha1').update(raw).digest('hex').slice(0, 16) + '"' };
+      for (const k of STATIC_CACHE.keys()) if (k.startsWith(target + ':')) STATIC_CACHE.delete(k);
+      STATIC_CACHE.set(key, hit);
+      send(hit);
+    });
   });
 }
 
@@ -147,9 +169,9 @@ const server = http.createServer(async (req, res) => {
 
   try {
     if (route === '/') return index(res);
-    if (/^\/(app|charts|pet)\.js$/.test(route) || /^\/(style|tokens|pet)\.css$/.test(route)) return static_(res, route.slice(1));
+    if (/^\/(app|charts|pet)\.js$/.test(route) || /^\/(style|tokens|pet)\.css$/.test(route)) return static_(req, res, route.slice(1));
     // The companion's preview: the drawing, reviewed up close before it is wired to anything.
-    if (route === '/pet') return static_(res, 'pet.html');
+    if (route === '/pet') return static_(req, res, 'pet.html');
 
     if (route === '/api/self') return json(res, await self.measure());
 

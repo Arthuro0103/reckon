@@ -253,9 +253,9 @@ try { sea = require('node:sea'); } catch { /* Node < 20, or not built as a SEA: 
   if (!src.includes(guardAnchor)) throw new Error('embedAssetPatch: anchor not found — has server.js changed shape?');
   src = src.replace(guardAnchor, guard);
 
-  const staticAnchor = `function static_(res, file) {
+  const staticAnchor = `function static_(req, res, file) {
   const target = path.join(WEB, file);`;
-  const staticReplacement = `function static_(res, file) {
+  const staticReplacement = `function static_(req, res, file) {
   if (sea && sea.isSea()) {
     try {
       const buf = Buffer.from(sea.getAsset(file));
