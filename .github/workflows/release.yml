@@ -13,9 +13,15 @@ permissions:
 jobs:
   # The gate that matters. It runs on every push and every pull request, and it
   # is the only job that guards `main`.
+  #
+  # macOS only: lib/platform has darwin.js and win32.js and no Linux
+  # implementation, so on Ubuntu four checks fail by design (the suite refuses a
+  # platform with no implementation, on purpose). The runner image is pinned: a
+  # floating `macos-latest` would change the compiler under the check without a
+  # commit to blame.
   check:
     name: check (node ${{ matrix.node }})
-    runs-on: ubuntu-latest
+    runs-on: macos-15
     strategy:
       fail-fast: false
       matrix:
@@ -28,21 +34,12 @@ jobs:
       # No install step, deliberately: this project has no dependencies, and a
       # `npm ci` here would quietly stop that from being true.
       - run: node bin/check.js
-
-  # The native pet is one Swift file, and Linux cannot compile it. This leg runs the same suite on
-  # a Mac, where bin/check.js compiles native/pet.swift and compares its pose() with web/pet.js at
-  # all 101 levels. The runner image is pinned on purpose: a floating `macos-latest` would change
-  # the compiler under the check without a commit to blame.
-  check-macos:
-    name: check (macOS, native pet)
-    runs-on: macos-15
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-      - run: node bin/check.js
+      # The native pet is one Swift file. bin/check.js compiles native/pet.swift
+      # and compares its pose() with web/pet.js at all 101 levels; this step
+      # typechecks it and prints the pose. One leg is enough, the compiler does
+      # not depend on the node version.
       - name: Typecheck the pet and print its pose
+        if: matrix.node == '22'
         run: |
           swiftc -typecheck native/pet.swift
           swiftc -O native/pet.swift -o "$RUNNER_TEMP/reckon-pet"
@@ -61,7 +58,7 @@ jobs:
   # Mach-O will not launch on Apple Silicon at all.
   build:
     name: build all targets
-    needs: [check, check-macos]
+    needs: [check]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: macos-14
     steps:
