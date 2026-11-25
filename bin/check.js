@@ -385,7 +385,7 @@ function safety() {
   if (!missed.length && !flagged.length) ok(`the state-change detector catches all ${samples.length} planted commands and none of the ${clean.length} readings`);
   else fail('the state-change detector is wrong', `missed: ${missed.join(' | ')} flagged: ${flagged.join(' | ')}`);
 
-  const files = ['server.js', ...libFiles(), 'bin/reckon', 'bin/report.js', 'bin/scan.js'].filter((f) => fs.existsSync(path.join(ROOT, f)));
+  const files = ['server.js', ...libFiles(), 'bin/reckon', ...fs.readdirSync(path.join(ROOT, 'bin')).filter((n) => n.endsWith('.js') && n !== 'check.js').map((n) => `bin/${n}`)].filter((f) => fs.existsSync(path.join(ROOT, f)));
   let dirty = 0;
   for (const f of files) {
     if (f === 'lib/act.js') continue;
@@ -929,6 +929,168 @@ async function onlyHere() {
   const small = await run([r({ name: 'a', onlyHere: 1, hasRemote: true })]);
   if (small && !small.serious) ok('a single unpushed commit is a nudge, not an alarm');
   else fail('one commit was escalated to serious');
+}
+
+// Archiving idle Claude Code sessions: the one action that runs without a click
+// (owner, 2026-11-24). Nothing real is signalled here: the process list, the
+// session records, the clock and exec are all fakes, and exec only records argv.
+async function archiveSessions() {
+  const act = require('../lib/act');
+  const archive = require('../lib/archive');
+  const M = 60000, NOW = 1795500000000;
+  const ID = (n) => `0e7ddf50-913c-4453-aba4-0c768c44${String(n).padStart(4, '0')}`;
+  const SELF = 900;
+  const proc = (pid, o = {}) => ({ pid, ppid: o.ppid ?? 50, rssKB: o.rssKB ?? 300 * 1024, cpuPct: o.cpuPct ?? 0.1,
+    ageS: o.ageS ?? 3600, startedAt: NOW - (o.ageS ?? 3600) * 1000, tty: o.tty ?? null, command: o.command ?? '/x/.local/bin/claude' });
+  const rec = (pid, n, o = {}) => ({ pid, sessionId: ID(n), cwd: `/w/p${n}`, kind: 'interactive', entrypoint: o.entrypoint ?? 'orca', status: o.status ?? 'idle',
+    startedAt: NOW - (o.ageS ?? 3600) * 1000 + (o.lag ?? 900) });
+  // pid 101: idle Orca chat with its stdin helper -> archived.
+  // 102: conversation written 3 min ago. 103: a shell child. 104: SDK script. 105: busy CPU.
+  // 106: recycled pid (record 2 min off). 107: no conversation file. 108: terminal used 1 min ago.
+  // 109: reckon's own parent. 110: idle terminal session, archived.
+  let list = [
+    proc(50, { command: '/Applications/Orca.app/Contents/MacOS/orca-provider-exec', ppid: 1 }),
+    proc(101), proc(1011, { ppid: 101, command: '/Applications/Orca.app/Contents/MacOS/orca-provider-exec', rssKB: 100 }),
+    proc(102), proc(103), proc(1031, { ppid: 103, command: '/bin/zsh' }), proc(104), proc(105, { cpuPct: 40 }),
+    proc(106), proc(107), proc(108, { tty: 's001' }), proc(109), proc(SELF, { ppid: 109, command: 'node' }), proc(110, { tty: 's002' }),
+  ];
+  const records = [rec(101, 1), rec(102, 2), rec(103, 3), rec(104, 4, { entrypoint: 'sdk-py' }), rec(105, 5),
+    { ...rec(106, 6), startedAt: NOW - 3600000 + 120000 }, rec(107, 7), rec(108, 8, { entrypoint: 'cli' }), rec(109, 9, { entrypoint: 'cli' }),
+    rec(110, 10, { entrypoint: 'cli' })];
+  const LIST0 = list.slice();
+  let writtenAt = (id) => (id === ID(2) ? NOW - 3 * M : id === ID(7) ? null : NOW - 40 * M);
+  const probe = {
+    now: () => NOW, home: () => '/h', records: async () => records,
+    conversationAt: async (home, cwd, id) => { const at = writtenAt(id); return at == null ? null : { at, file: 'f', dirShown: '~/.claude/projects/x' }; },
+    ttyTouchedAt: async (tty) => (tty === 's001' ? NOW - M : NOW - 60 * M),
+    argsOf: async (pids) => Object.fromEntries(pids.map((x) => [x, '/bin/zsh -c make'])), ports: async () => [],
+  };
+  const ran = [], logged = [];
+  const engine = (o = {}) => act.createEngine({ processList: async () => list, now: () => NOW, selfPid: SELF, archive: probe,
+    memoryStats: async () => null, memoryPressure: async () => null, log: { append: (e) => { logged.push(e); return true; }, read: () => [] },
+    exec: async (cmd, args) => { ran.push([cmd, ...args]); list = list.filter((p) => String(p.pid) !== args[1]); return { ok: true, out: '', erro: null }; }, ...o });
+
+  const r = await engine().archiveIdle({ idleS: 15 * 60 });
+  const pick = (pid) => r.sessions.find((x) => x.pid === pid) || {};
+  const idle = r.sessions.filter((x) => x.archive).map((x) => x.pid).sort((a, b) => a - b);
+  if (r.ok && !r.ran && idle.join(',') === '101,110') ok('only the idle Orca chat and the idle terminal session are judged idle');
+  else fail('the wrong sessions are judged idle', JSON.stringify(idle));
+  if (!ran.length) ok('without --run, nothing is signalled');
+  else fail('a report-only pass ran a command', JSON.stringify(ran));
+  const expect = [[102, /written 3 min ago/], [103, /not a recognised MCP or tool server/], [104, /sdk-py/], [105, /40% of a core/],
+    [106, /recycled pid/], [107, /cannot be proven resumable/], [108, /terminal was used/], [109, /reckon itself/]];
+  const wrong = expect.filter(([pid, re]) => !re.test(pick(pid).why || ''));
+  if (!wrong.length) ok(`each of the ${expect.length} sessions kept alive says why (recent, shell child, SDK, busy, recycled pid, no transcript, typing, reckon)`);
+  else fail('a session was kept for the wrong reason', wrong.map(([p]) => `${p}: ${pick(p).why}`).join(' | '));
+  if (/claude --resume 0e7ddf50/.test(pick(101).resume) && /^cd '\/w\/p1' && /.test(pick(101).resume)) ok('every session carries the exact command that resumes it');
+  else fail('the resume command is wrong', pick(101).resume);
+
+  const dry = await engine({ dryRun: true }).archiveIdle({ idleS: 15 * 60, run: true });
+  if (!ran.length && dry.results.every((x) => x.dryRun)) ok('a dry run logs the argv and signals nothing');
+  else fail('a dry run signalled something', JSON.stringify(ran));
+
+  // Between the survey and the stop, session 110 is written to: it must be refused, not stopped.
+  const reads = new Map();
+  const before = writtenAt;
+  writtenAt = (id) => { const n = (reads.get(id) || 0) + 1; reads.set(id, n); return id === ID(10) && n > 1 ? NOW - 10000 : before(id); };
+  const live = await engine().archiveIdle({ idleS: 15 * 60, run: true });
+  writtenAt = before;
+  const argv = ran.map((a) => a.join(' '));
+  if (argv.length === 1 && argv[0] === 'kill -TERM 101') ok('--run sends one polite stop (kill -TERM) to the idle session, and nothing else');
+  else fail('--run sent the wrong commands', JSON.stringify(argv));
+  const refused = live.results.find((x) => x.pid === 110);
+  if (refused && /not provably idle any more/.test(refused.refused || '')) ok('a session written to between the survey and the stop is judged again and left alone');
+  else fail('a session active again at the last moment was stopped', JSON.stringify(refused));
+  const line = logged.find((e) => e.ok && e.auto);
+  if (line && line.info && line.info.resume && line.info.sessionId === ID(1)) ok('the archive is logged with auto: true and the command that resumes it');
+  else fail('the archive was not logged with its resume command', JSON.stringify(line));
+
+  if (act.clean({ action: 'archive-ai-session', id: 'ai-session-101' }) === null) ok('the panel can never name the archive action');
+  else fail('the browser can address the automatic archive action');
+  const e2 = engine();
+  e2.remember('memory', [{ id: 'x1', title: 't', confidence: 'high', action: { id: 'archive-ai-session' }, target: { pid: 1 } }]);
+  if (!e2._targets.size) ok('no reading can turn the archive action into a clickable row');
+  else fail('a row with the archive action became clickable');
+  // The rules the first table does not reach, one record at a time on the same fake machine.
+  list = LIST0.slice();   // the live run above stopped 101 on the fake machine
+  const j = (r, l = list) => archive.judge(r, l, probe, { idleS: 15 * 60, selfPid: SELF });
+  const more = [
+    ['a terminal session that says it is busy', await j(rec(110, 10, { entrypoint: 'cli', status: 'busy' })), /busy, not idle/],
+    ['a record with no kind', await j({ ...rec(101, 1), kind: undefined }), /unlabelled/],
+    ['reckon itself, with no child', await j(rec(SELF, 1), [...list.filter((x) => x.pid !== SELF), proc(SELF, { ppid: 109 })]), /reckon itself/],
+    ['an Orca helper that has a child of its own', await j(rec(101, 1), [...list, proc(1012, { ppid: 1011, command: '/bin/zsh' })]), /not a recognised MCP/],
+    ['a session started 10 min ago', await j(rec(101, 1, { ageS: 600 }), list.map((x) => (x.pid === 101 ? proc(101, { ageS: 600 }) : x))), /started 10 min ago/],
+  ];
+  const bad = more.filter(([, r, re]) => r.archive || !re.test(r.skip || ''));
+  if (!bad.length) ok(`${more.length} more sessions are kept, each for its own reason (busy, no kind, reckon, helper with a child, too young)`);
+  else fail('a session was archived, or kept for the wrong reason', bad.map(([n, r]) => `${n}: ${r.skip || 'ARCHIVED'}`).join(' | '));
+
+  // At the stop, the record must still name the same conversation.
+  let swap = false;
+  const probe2 = { ...probe, records: async () => (swap ? records.map((r) => (r.pid === 101 ? { ...r, sessionId: ID(99) } : r)) : records) };
+  ran.length = 0;
+  list = LIST0.slice();
+  const origConv = probe2.conversationAt;
+  probe2.conversationAt = async (...a) => { const v = await origConv(...a); swap = true; return v; };
+  const eng = engine({ archive: probe2 });
+  const sw = await eng.archiveIdle({ idleS: 15 * 60, run: true });
+  const s101 = sw.results.find((x) => x.pid === 101);
+  if (!ran.some((a) => a[2] === '101') && s101 && /names another conversation/.test(s101.refused || '')) ok('a record that names another conversation at the stop is refused');
+  else fail('a session was stopped although its record changed', JSON.stringify({ ran, s101 }));
+  const blind = await engine({ archive: { ...probe, records: async () => null } }).archiveIdle({ idleS: 15 * 60 });
+  if (!blind.ok && /could not be read/.test(blind.refused)) ok('an unreadable ~/.claude/sessions/ is "could not read", never "no session"');
+  else fail('an unreadable session folder read as empty', JSON.stringify(blind));
+
+  // The real readers, in a folder of this test's own.
+  const os = require('node:os');
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'reckon-archive-check-'));
+  try {
+    const sd = path.join(tmp, '.claude', 'sessions'); fs.mkdirSync(sd, { recursive: true });
+    const good = { pid: 4242, sessionId: ID(1), cwd: '/w/p1', kind: 'interactive', entrypoint: 'cli', status: 'idle', startedAt: 1 };
+    fs.writeFileSync(path.join(sd, '4242.json'), JSON.stringify(good));
+    fs.writeFileSync(path.join(sd, '4243.json'), JSON.stringify({ ...good, pid: 9999 }));
+    fs.writeFileSync(path.join(sd, '4244.json'), JSON.stringify({ ...good, pid: 4244, sessionId: '../../etc' }));
+    fs.writeFileSync(path.join(sd, '4245.json'), '{not json');
+    const recs = archive.readRecords(tmp);
+    if (recs.length === 1 && recs[0].pid === 4242 && recs[0].status === 'idle') ok('only a well-formed record whose file name is its pid is read');
+    else fail('malformed session records were read', JSON.stringify(recs));
+    const dir = path.join(tmp, '.claude', 'projects', '-w-p1');
+    fs.mkdirSync(path.join(dir, ID(1), 'subagents'), { recursive: true });
+    const old = Date.now() / 1000 - 3600;
+    fs.writeFileSync(path.join(dir, `${ID(1)}.jsonl`), '{}\n'); fs.utimesSync(path.join(dir, `${ID(1)}.jsonl`), old, old);
+    fs.writeFileSync(path.join(dir, ID(1), 'subagents', 'a.jsonl'), '{}\n');
+    const c = archive.conversationAt(tmp, '/w/p1', ID(1));
+    if (c && Date.now() - c.at < 60000) ok('a subagent writing under the session folder counts as activity');
+    else fail('a working subagent did not count', JSON.stringify(c));
+    if (archive.conversationAt(tmp, '/w/p1', ID(2)) === null) ok('a session with no conversation file has none, so it is never archived');
+    else fail('a missing conversation file was found');
+  } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
+
+  // The loop shared by `archive --every` and `watch --pet`: one at a time, and a stop waits for the pass.
+  const loopMod = require('../lib/archiveloop');
+  const lh = fs.mkdtempSync(path.join(os.tmpdir(), 'reckon-archive-loop-'));
+  try {
+    let passes = 0, release;
+    const slow = { archiveIdle: () => { passes++; return new Promise((r) => { release = () => r({ ok: true, results: [] }); }); } };
+    const one = loopMod.start({ act: slow, everyMs: 3600000, home: lh, onResult: () => {} });
+    const two = loopMod.start({ act: slow, everyMs: 3600000, home: lh });
+    if (one.ok && two.error && /already runs/.test(two.error)) ok('a second archiving loop is refused while one runs');
+    else fail('two archiving loops ran at once', JSON.stringify({ one: !!one.ok, two }));
+    let done = false;
+    const st = one.stop().then(() => { done = true; });
+    await new Promise((r) => setTimeout(r, 30));
+    const waited = !done;
+    release(); await st;
+    if (waited && done && passes === 1 && !fs.existsSync(loopMod.lockFile(lh))) ok('stopping the loop waits for the pass in progress, then frees the lock');
+    else fail('the loop stopped mid-pass or kept its lock', JSON.stringify({ waited, done, passes }));
+  } finally { fs.rmSync(lh, { recursive: true, force: true }); }
+  const w = require('../lib/watch');
+  if (w.parse(['--pet']).archive === true && w.parse(['--pet', '--no-archive']).archive === false) ok('watch --pet archives idle sessions unless --no-archive');
+  else fail('watch --pet does not turn the archiver on by default');
+
+  const low = await engine().archiveIdle({ idleS: 60, run: true });
+  if (!low.ok && archive.parseIdle(4) === null && archive.parseIdle(15) === 900) ok('the idle threshold cannot go under 5 minutes');
+  else fail('an idle threshold under 5 minutes was accepted');
 }
 
 /* The three things this round added, and the line each one must not cross. */
@@ -3989,6 +4151,7 @@ async function phase4() {
   await step('corner', async () => { await cornerIsSafe(); });
   await step('open only', async () => { await openOnly(); });
   await step('actions', async () => { await actions(); });
+  await step('archive', async () => { await archiveSessions(); });
   await step('memory plan', async () => { await memoryPlan(); });
   await step('phase 4', async () => { await phase4(); });
   await step('agent skills', async () => { await agentSkills(); });

@@ -24,5 +24,6 @@ const arg = process.argv[2];
 if (arg === 'scan') require('./scan.js');
 else if (arg === 'check') require('./check.js');
 else if (arg === 'report') require('./report.js');
+else if (arg === 'archive') require('./archive.js');
 else if (arg === 'watch') require('../lib/watch').main(process.argv.slice(3));
 else require('../server.js');

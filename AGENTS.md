@@ -11,6 +11,10 @@ It deletes nothing a person did not click, and you may not delete anything.
   cache or move a folder to the Trash from a fixed table in `lib/act.js`, only after a person clicks "Do", reads
   the preview and confirms. Never call `/api/act/*`, never click "Do" or "Confirm", never
   script the page. Point to the row. The human clicks.
+- One action runs without a click, and only when the human starts it: `reckon archive --run`
+  or `reckon archive --every <min>` ends (SIGTERM) Claude Code sessions idle for 15 minutes or
+  more, whose conversation stays on disk (owner's decision, 2026-11-24). Never start either one
+  yourself. `reckon archive` alone only reports, and you may run it.
 - Every recommendation carries its `proof` and what the user would `lose` if it were wrong.
   "Cannot judge" is an answer, not an invitation to guess.
 - reckon writes only inside `~/.cache/reckon/`, plus `./reckon-report.txt` from `reckon report`.
@@ -31,6 +35,7 @@ It deletes nothing a person did not click, and you may not delete anything.
 | Deep scan | `node bin/reckon scan` (result in `~/.cache/reckon/scan.json`) |
 | One reading | `node bin/reckon watch --once` |
 | Diagnostic report | `node bin/reckon report` |
+| Idle Claude sessions (report only) | `node bin/reckon archive` |
 
 ## Procedures
 

@@ -238,6 +238,28 @@ the log and the state file.
 
 ---
 
+## Archiving idle Claude Code sessions, if you ask
+
+Each Claude Code session holds 200 to 300 MB even while nobody uses it. `reckon archive` finds the
+ones idle for 15 minutes or more and, only when you say so, ends them with a polite stop (SIGTERM).
+The conversation stays on disk, and `claude --resume <id>` brings it back. It is the one thing
+reckon does without a click, and it never starts by itself.
+
+```bash
+node bin/reckon archive              # report only: every live session, and why it would or would not go
+node bin/reckon archive --run        # archive the idle ones once
+node bin/reckon archive --every 5    # archive now and every 5 minutes, until ctrl+c
+node bin/reckon archive --list       # what was archived, with the command that resumes each
+node bin/reckon archive --idle 30    # a longer threshold (5 minutes at least)
+```
+
+A session stays alive when its conversation (or a subagent's) was written within the threshold, its
+terminal was used, it uses 2% of a core or more, it runs anything but its own idle tool servers, it
+was started by a script (an SDK entry point), or its conversation file cannot be found. Every stop
+goes to `~/.cache/reckon/actions.log` with the command that resumes it.
+
+---
+
 ## The guards, and what each one cost somebody
 
 **Symlinks.** Before suggesting you delete a directory, `reckon` looks for a symlink pointing at
